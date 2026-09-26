@@ -1,0 +1,429 @@
+{% extends "base.html" %}
+{% block title %}Camera · Violence Detection{% endblock %}
+{% block content %}
+<section class="hero dashboard-hero">
+  <h1 data-i18n="camera_hero_h1">Giám sát qua camera</h1>
+  <p data-i18n="camera_hero_p">Phân tích trực tiếp và hiển thị xác suất Bạo lực / Không bạo lực.</p>
+</section>
+<section class="card grid-actions upload-card">
+  <div class="section-heading"><div><h2 data-i18n="camera_h1">Camera trực tiếp</h2><p data-i18n="camera_p">Nhận diện liên tục, ghi từ lúc phát hiện đến khi hành vi kết thúc.</p></div><span class="status-dot" data-i18n="status_ready">Sẵn sàng</span></div>
+  <div id="stage" class="cam-stage" hidden>
+    <video id="cam" autoplay muted playsinline></video>
+    <canvas id="overlay"></canvas>
+  </div>
+  <div class="btn-row">
+    <button id="startBtn" type="button" data-i18n="btn_start_camera">Bật camera</button>
+    <button id="stopBtn" class="secondary" type="button" disabled data-i18n="btn_stop_camera">Tắt</button>
+    <button id="record10Btn" class="secondary" type="button" disabled data-i18n="btn_record_10s">Quay thử 10s</button>
+  </div>
+  <div id="alertBox" class="alert" data-i18n="alert_violence">⚠ CẢNH BÁO BẠO LỰC ĐÃ PHÁT HIỆN</div>
+  <div id="status" class="result muted" data-i18n="camera_off">Chưa bật camera</div>
+  <div id="hud" class="hud muted" data-i18n="hud_default">Bạo lực: —% · Không bạo lực: —%</div>
+  <div id="testResult" class="result muted" hidden></div>
+  <div id="testResultActions" class="result-actions" hidden></div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const cam = document.getElementById("cam");
+  const overlay = document.getElementById("overlay");
+  const stage = document.getElementById("stage");
+  const startBtn = document.getElementById("startBtn");
+  const stopBtn = document.getElementById("stopBtn");
+  const status = document.getElementById("status");
+  const alertBox = document.getElementById("alertBox");
+  const hud = document.getElementById("hud");
+  const record10Btn = document.getElementById("record10Btn");
+  const testResult = document.getElementById("testResult");
+  const testResultActions = document.getElementById("testResultActions");
+  const ctx = overlay.getContext("2d");
+  const t = (key) => (window.VD ? window.VD.t(key) : key);
+
+  // Model được train trên các clip 16 khung hình LIÊN TIẾP lấy trực tiếp từ
+  // video gốc (~25-30fps) → mỗi clip chỉ ~0.5-0.6 giây chuyển động thực. Lấy
+  // mẫu webcam ở 150ms/khung khiến 16 khung trải dài tới 2.4 giây (~6.7fps
+  // hiệu dụng) — chuyển động trông "chậm/rời rạc" hơn nhiều so với lúc train
+  // nên webcam hay nhận sai (trong khi video tải lên vẫn đúng vì đọc đúng
+  // khung liên tiếp ở fps gốc). Giảm xuống 40ms (~25fps) để khớp lại tốc độ
+  // chuyển động với dữ liệu train.
+  const NEED_FRAMES = 16;
+  const SAMPLE_MS = 40;
+  // Cập nhật nhanh hơn để bám sát thời điểm bắt đầu/kết thúc hành động.
+  const PREDICT_EVERY_MS = 220;
+  // Khung hình gửi lên server để phân tích được thu nhỏ về tối đa MAX_SEND_SIDE px
+  // (video hiển thị vẫn giữ nguyên độ phân giải gốc). Trước đây mỗi lần lấy mẫu
+  // vẽ + nén JPEG cả khung 1280x720 ~5-6 lần/giây khiến luồng camera bị giật/đơ;
+  // thu nhỏ trước khi nén giảm ~10 lần khối lượng tính toán trên main thread.
+  const MAX_SEND_SIDE = 384;
+  // Số cửa sổ gần nhất dùng để làm mượt xác suất trước khi so ngưỡng — trước
+  // đây bị giới hạn còn 1 (mất tác dụng làm mượt) khiến nhãn nhảy theo từng
+  // dự đoán đơn lẻ, đặc biệt lúc không có người trong khung.
+  const PROB_HISTORY_SIZE = 5;
+
+  let stream = null;
+  let running = false;
+  let busy = false;
+  let sampleTimer = null;
+  let predictTimer = null;
+  let rafId = 0;
+  let frameBuf = [];
+  let lastResult = null;
+  let probabilityHistory = [];
+  let recorder = null;
+  let recordingChunks = [];
+  let nonViolenceStreak = 0;
+  let violenceStreak = 0;
+  // Cần 3 cửa sổ liên tiếp vượt ngưỡng mới báo bạo lực, tránh nhiễu 1 khung lẻ
+  // (đặc biệt khi khung hình trống/không có người — xác suất thô dao động quanh
+  // ngưỡng) làm nhãn nhảy loạn xạ giữa hai lớp.
+  const START_AFTER_VIOLENCE = 3;
+  // Kết thúc event ngay ở cửa sổ kế tiếp không còn bạo lực; tránh trễ 5-10 giây.
+  const END_AFTER_NONVIOLENCE = 1;
+  let testRecorder = null;
+  let testChunks = [];
+  let testCountdownId = null;
+  const TEST_RECORD_MS = 10000;
+  let lastVfcTs = 0;
+  const supportsVFC = typeof cam.requestVideoFrameCallback === "function";
+
+  // Canvas dùng lại (không tạo mới mỗi lần lấy mẫu) để tránh cấp phát/garbage
+  // collection liên tục — một nguồn gây giật hình khác trên máy cấu hình yếu.
+  const sendCanvas = document.createElement("canvas");
+  const sendCtx = sendCanvas.getContext("2d", { willReadFrequently: true });
+
+  function resizeOverlay() {
+    const w = cam.videoWidth || cam.clientWidth;
+    const h = cam.videoHeight || cam.clientHeight;
+    if (!w || !h) return;
+    if (overlay.width !== w || overlay.height !== h) {
+      overlay.width = w;
+      overlay.height = h;
+    }
+  }
+
+  function drawOverlay() {
+    if (!running) return;
+    resizeOverlay();
+    const w = overlay.width;
+    const h = overlay.height;
+    ctx.clearRect(0, 0, w, h);
+
+    if (lastResult) {
+      const bad = lastResult.pred_class === "violence";
+      const color = bad ? "#ef4444" : "#22c55e";
+      const vPct = (lastResult.violence_pct ?? (lastResult.violence_prob_mean * 100)).toFixed(1);
+      const nPct = (lastResult.non_violence_pct ?? (100 - vPct)).toFixed(1);
+      const vLabel = t("overlay_violence");
+      const nLabel = t("overlay_nonviolence");
+      const label = bad ? `${vLabel} ${vPct}%` : `${nLabel} ${nPct}%`;
+      const boxes = lastResult.boxes && lastResult.boxes.length
+        ? lastResult.boxes
+        : [{ x: 0.18, y: 0.1, w: 0.64, h: 0.8 }];
+
+      boxes.forEach((b) => {
+        const x = b.x * w;
+        const y = b.y * h;
+        const bw = b.w * w;
+        const bh = b.h * h;
+        ctx.lineWidth = Math.max(3, Math.round(w / 280));
+        ctx.strokeStyle = color;
+        ctx.strokeRect(x, y, bw, bh);
+
+        ctx.font = `bold ${Math.max(14, Math.round(w / 28))}px Segoe UI, sans-serif`;
+        const pad = 8;
+        const tw = ctx.measureText(label).width;
+        const th = Math.max(22, Math.round(w / 22));
+        const ty = Math.max(th + 4, y);
+        ctx.fillStyle = color;
+        ctx.fillRect(x, ty - th, tw + pad * 2, th);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(label, x + pad, ty - 6);
+      });
+
+      // Top HUD bar
+      ctx.fillStyle = "rgba(15,23,42,0.55)";
+      ctx.fillRect(0, 0, w, 36);
+      ctx.fillStyle = "#fff";
+      ctx.font = "600 14px Segoe UI, sans-serif";
+      ctx.fillText(`${vLabel} ${vPct}%   |   ${nLabel} ${nPct}%`, 12, 23);
+    }
+
+    rafId = requestAnimationFrame(drawOverlay);
+  }
+
+  function ensureSendCanvasSize() {
+    const vw = cam.videoWidth;
+    const vh = cam.videoHeight;
+    if (!vw || !vh) return false;
+    const scale = Math.min(1, MAX_SEND_SIDE / Math.max(vw, vh));
+    const w = Math.max(2, Math.round(vw * scale));
+    const h = Math.max(2, Math.round(vh * scale));
+    if (sendCanvas.width !== w || sendCanvas.height !== h) {
+      sendCanvas.width = w;
+      sendCanvas.height = h;
+    }
+    return true;
+  }
+
+  function grabJpegBlob() {
+    if (!ensureSendCanvasSize()) return null;
+    sendCtx.drawImage(cam, 0, 0, sendCanvas.width, sendCanvas.height);
+    return new Promise((resolve) => sendCanvas.toBlob((b) => resolve(b), "image/jpeg", 0.7));
+  }
+
+  async function sampleFrame() {
+    if (!running || cam.readyState < 2) return;
+    const blob = await grabJpegBlob();
+    if (!blob) return;
+    frameBuf.push(blob);
+    if (frameBuf.length > NEED_FRAMES) frameBuf.shift();
+  }
+
+  // Lấy mẫu bám theo khung hình thật của camera (requestVideoFrameCallback) khi
+  // trình duyệt hỗ trợ, thay vì setInterval mù — tránh lấy trùng khung khi tab
+  // bị throttle và đồng bộ sát với "hiện tại" của luồng video hơn.
+  function vfcLoop(now) {
+    if (!running) return;
+    if (now - lastVfcTs >= SAMPLE_MS) {
+      lastVfcTs = now;
+      sampleFrame();
+    }
+    cam.requestVideoFrameCallback(vfcLoop);
+  }
+
+  function startSampling() {
+    if (supportsVFC) {
+      lastVfcTs = 0;
+      cam.requestVideoFrameCallback(vfcLoop);
+    } else {
+      sampleTimer = setInterval(sampleFrame, SAMPLE_MS);
+    }
+  }
+
+  async function predictOnce() {
+    if (!running || busy || frameBuf.length < Math.min(8, NEED_FRAMES)) return;
+    busy = true;
+    status.textContent = t("detecting_realtime");
+    status.className = "result muted";
+    const fd = new FormData();
+    const take = frameBuf.slice(-NEED_FRAMES);
+    take.forEach((b, i) => fd.append("frames", b, `f${i}.jpg`));
+    fd.append("save_history", "0");
+    try {
+      const r = await fetch("/predict/live", { method: "POST", body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : t("detect_error_generic"));
+      const rawProbability = Number(j.violence_prob_mean || 0);
+      probabilityHistory.push(rawProbability);
+      // Upload lấy trung bình nhiều cửa sổ; Camera mô phỏng bằng 5 cửa sổ gần nhất.
+      if (probabilityHistory.length > PROB_HISTORY_SIZE) probabilityHistory.shift();
+      // Giống Upload: lấy trung bình nhiều cửa sổ gần nhất trước khi kết luận.
+      const meanProbability = probabilityHistory.reduce((a, b) => a + b, 0) / probabilityHistory.length;
+      const candidateViolence = meanProbability >= Number(j.threshold ?? 0.6);
+      violenceStreak = candidateViolence ? violenceStreak + 1 : 0;
+      // Cần 3 cửa sổ liên tiếp vượt ngưỡng để xác nhận, tránh nhầm chuyển động nhẹ.
+      const bad = violenceStreak >= START_AFTER_VIOLENCE;
+      // Ghi đè luôn violence_pct/non_violence_pct bằng giá trị đã làm mượt —
+      // trước đây chỉ vPct hiển thị được làm mượt còn nPct và canvas overlay
+      // (đọc từ lastResult.violence_pct) vẫn dùng số thô của 1 lần dự đoán,
+      // khiến % hiển thị không khớp nhau và nhấp nháy dù nhãn đã ổn định hơn.
+      const smoothedVPct = Math.round(meanProbability * 1000) / 10;
+      const smoothedNPct = Math.round((1 - meanProbability) * 1000) / 10;
+      lastResult = {
+        ...j,
+        pred_class: bad ? "violence" : "non_violence",
+        violence_prob_mean: meanProbability,
+        violence_pct: smoothedVPct,
+        non_violence_pct: smoothedNPct,
+      };
+      if (bad) {
+        nonViolenceStreak = 0;
+        if (!recorder || recorder.state === "inactive") startEventRecording();
+      } else if (recorder && recorder.state === "recording") {
+        nonViolenceStreak += 1;
+        if (nonViolenceStreak >= END_AFTER_NONVIOLENCE) stopEventRecording();
+      }
+      const vPct = smoothedVPct.toFixed(1);
+      const nPct = smoothedNPct.toFixed(1);
+      const predLabel = bad ? t("overlay_violence") : t("overlay_nonviolence");
+      status.innerHTML = `<span class="${bad ? "violence" : "ok"}">${predLabel}</span>`;
+      status.className = "result";
+      hud.innerHTML = `<span class="violence">${t("overlay_violence")} ${vPct}%</span> · <span class="ok">${t("overlay_nonviolence")} ${nPct}%</span>`;
+      hud.className = "hud";
+      if (bad) alertBox.classList.add("show");
+      else alertBox.classList.remove("show");
+    } catch (e) {
+      status.textContent = t("error_label") + e.message;
+      status.className = "result violence";
+    } finally {
+      busy = false;
+    }
+  }
+
+  function startEventRecording() {
+    if (!stream || recorder) return;
+    const type = MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
+      ? "video/webm;codecs=vp8" : "video/webm";
+    recordingChunks = [];
+    recorder = new MediaRecorder(stream, { mimeType: type });
+    recorder.ondataavailable = (e) => { if (e.data.size) recordingChunks.push(e.data); };
+    recorder.onstop = async () => {
+      const blob = new Blob(recordingChunks, { type: "video/webm" });
+      recorder = null; recordingChunks = [];
+      if (blob.size < 1000) return;
+      status.textContent = "Đã kết thúc bạo lực · đang lưu video vào lịch sử...";
+      const fd = new FormData();
+      fd.append("file", blob, "webcam_event.webm");
+      fd.append("source", "webcam");
+      try {
+        const r = await fetch("/predict", { method: "POST", body: fd });
+        if (!r.ok) throw new Error("Không lưu được video sự kiện");
+        status.textContent = "Đã lưu video bạo lực vào lịch sử";
+      } catch (e) {
+        status.textContent = "Lỗi lưu lịch sử: " + e.message;
+        status.className = "result violence";
+      }
+    };
+    recorder.start();
+    status.textContent = "Đang ghi lại sự kiện bạo lực...";
+  }
+
+  function stopEventRecording() {
+    nonViolenceStreak = 0;
+    if (recorder && recorder.state === "recording") recorder.stop();
+  }
+
+  // "Quay thử 10s": ghi đúng 10 giây từ webcam bất kể có phát hiện bạo lực hay
+  // không, rồi gửi qua /predict (pipeline video-file chuẩn, giống trang Upload)
+  // để có kết quả đáng tin cậy hơn dự đoán realtime từng cửa sổ 16 khung, đồng
+  // thời cho tải file vừa quay về máy.
+  function startTestRecording() {
+    if (!stream || testRecorder) return;
+    const type = MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
+      ? "video/webm;codecs=vp8" : "video/webm";
+    testChunks = [];
+    record10Btn.disabled = true;
+    testResultActions.hidden = true;
+    testResultActions.innerHTML = "";
+    let secondsLeft = 10;
+    testResult.hidden = false;
+    testResult.className = "result muted";
+    testResult.textContent = `${t("record10_recording")}${secondsLeft}s`;
+    testCountdownId = setInterval(() => {
+      secondsLeft -= 1;
+      if (secondsLeft > 0) testResult.textContent = `${t("record10_recording")}${secondsLeft}s`;
+    }, 1000);
+    testRecorder = new MediaRecorder(stream, { mimeType: type });
+    testRecorder.ondataavailable = (e) => { if (e.data.size) testChunks.push(e.data); };
+    testRecorder.onstop = async () => {
+      if (testCountdownId) { clearInterval(testCountdownId); testCountdownId = null; }
+      const blob = new Blob(testChunks, { type: "video/webm" });
+      testRecorder = null;
+      testChunks = [];
+      record10Btn.disabled = !running;
+      if (blob.size < 1000) {
+        testResult.textContent = t("record10_too_short");
+        testResult.className = "result violence";
+        return;
+      }
+      const localUrl = URL.createObjectURL(blob);
+      testResultActions.hidden = false;
+      testResultActions.innerHTML = `<a class="btn secondary" href="${localUrl}" download="webcam_test_10s.webm">${t("download_result")}</a>`;
+      testResult.textContent = t("record10_uploading");
+      testResult.className = "result muted";
+      const fd = new FormData();
+      fd.append("file", blob, "webcam_test_10s.webm");
+      fd.append("source", "webcam");
+      try {
+        const r = await fetch("/predict", { method: "POST", body: fd });
+        const j = await r.json();
+        if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : t("detect_error_generic"));
+        const pct = (j.confidence * 100).toFixed(1);
+        const bad = j.pred_class === "violence";
+        const predLabel = bad ? t("pred_violence") : t("pred_nonviolence");
+        testResult.innerHTML = `${t("result_label")}<span class="${bad ? "violence" : "ok"}">${predLabel}</span><br/>${t("confidence_label")}${pct}%`;
+        testResult.className = "result";
+        if (j.video_url) {
+          testResultActions.innerHTML += `<a class="btn secondary" href="${j.video_url}" target="_blank">${t("view_saved_video")}</a>`;
+        }
+      } catch (e) {
+        testResult.textContent = t("error_label") + e.message;
+        testResult.className = "result violence";
+      }
+    };
+    testRecorder.start();
+    setTimeout(() => {
+      if (testRecorder && testRecorder.state === "recording") testRecorder.stop();
+    }, TEST_RECORD_MS);
+  }
+
+  function stopTestRecordingIfActive() {
+    if (testCountdownId) { clearInterval(testCountdownId); testCountdownId = null; }
+    if (testRecorder && testRecorder.state === "recording") testRecorder.stop();
+  }
+
+  record10Btn.addEventListener("click", startTestRecording);
+
+  startBtn.addEventListener("click", async () => {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+    } catch (e) {
+      status.textContent = t("camera_open_error") + e.message;
+      status.className = "result violence";
+      return;
+    }
+    cam.srcObject = stream;
+    await cam.play().catch(() => {});
+    stage.hidden = false;
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    record10Btn.disabled = false;
+    running = true;
+    frameBuf = [];
+    lastResult = null;
+    probabilityHistory = [];
+    status.textContent = t("camera_running");
+    status.className = "result muted";
+    hud.textContent = t("hud_default");
+    hud.className = "hud muted";
+    alertBox.classList.remove("show");
+    drawOverlay();
+    startSampling();
+    predictTimer = setInterval(predictOnce, PREDICT_EVERY_MS);
+    // First predict after buffer fills
+    setTimeout(predictOnce, SAMPLE_MS * NEED_FRAMES + 200);
+  });
+
+  stopBtn.addEventListener("click", () => {
+    running = false;
+    if (sampleTimer) clearInterval(sampleTimer);
+    if (predictTimer) clearInterval(predictTimer);
+    sampleTimer = predictTimer = null;
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = 0;
+    stopTestRecordingIfActive();
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    if (recorder && recorder.state === "recording") recorder.stop();
+    recorder = null;
+    stream = null;
+    cam.srcObject = null;
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+    stage.hidden = true;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    record10Btn.disabled = true;
+    testResult.hidden = true;
+    testResultActions.hidden = true;
+    frameBuf = [];
+    lastResult = null;
+    status.textContent = t("camera_stopped");
+    status.className = "result muted";
+    alertBox.classList.remove("show");
+  });
+})();
+</script>
+{% endblock %}

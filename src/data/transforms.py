@@ -15,10 +15,10 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 class ClipTransform:
     """Applies the same spatial transform to every frame in a clip."""
 
-    def __init__(self, image_size: int, train: bool):
+    def __init__(self, image_size: int, train: bool, mean=IMAGENET_MEAN, std=IMAGENET_STD):
         self.image_size = image_size
         self.train = train
-        self.normalize = transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD)
+        self.normalize = transforms.Normalize(mean, std)
 
     def __call__(self, frames: list[np.ndarray]) -> torch.Tensor:
         pil_frames = [Image.fromarray(f) for f in frames]
@@ -51,5 +51,8 @@ class ClipTransform:
         return torch.stack(out, dim=0)
 
 
-def eval_transform(image_size: int) -> ClipTransform:
+def eval_transform(image_size: int, *, x3d: bool = False) -> ClipTransform:
+    # PyTorchVideo X3D model cards use 0.45/0.225 normalization.
+    if x3d:
+        return ClipTransform(image_size=image_size, train=False, mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
     return ClipTransform(image_size=image_size, train=False)

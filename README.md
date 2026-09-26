@@ -1,213 +1,119 @@
-# Phát hiện hành vi bạo lực trong video
-## CNN–LSTM kết hợp đặc trưng không gian – thời gian
+# Phát hiện bạo lực — CNN + BiLSTM + Attention
 
-Hệ thống phân loại video thành **violence** / **non_violence** bằng mô hình học sâu hai khối:
+Dự án dùng **notebook Kaggle để train** và **FastAPI để chạy web localhost**.
+Mô hình phân loại cả clip thành `non_violence` hoặc `violence`.
 
-- **Không gian (spatial):** ResNet50 trích đặc trưng hình ảnh trên từng frame (dáng người, hiện trường, đối tượng).
-- **Thời gian (temporal):** BiLSTM + attention mô hình chuỗi frame, nắm động tác diễn ra theo thời gian (đấm, đá, xô đẩy).
+## 1. Cài đặt và chạy web
 
----
+Cần Python 3.10+ và checkpoint PyTorch tương thích.
 
-## 1. Phát biểu bài toán
-
-Cho video \(V = \{x_1, x_2, \ldots, x_N\}\), cần dự đoán nhãn \(y \in \{0,1\}\) (không bạo lực / bạo lực) và xác suất \(p(y=1 \mid V)\).
-
-Đặc trưng thuần không gian (ảnh tĩnh) dễ nhầm cảnh căng thẳng với hành động thật. Đặc trưng thuần thời gian (chuyển động) dễ nhầm thể thao, nhảy, chạy. Khóa luận kết hợp cả hai.
-
----
-
-## 2. Hướng giải quyết
-
-Kiến trúc **CNN + BiLSTM + Temporal Attention** phù hợp khóa luận vì:
-
-1. CNN 2D pretrained ImageNet tận dụng được bộ dữ liệu nhỏ (Hockey Fight, RLVS, RWF-2000).
-2. LSTM giải thích được “chuỗi hành động”, đúng tiêu chí *không gian–thời gian*.
-3. Attention cho phép minh họa frame nào quyết định kết quả — hữu ích khi bảo vệ.
-4. Nhẹ hơn I3D / SlowFast, huấn luyện được trên GPU thông thường.
-
-```mermaid
-flowchart LR
-    A[Video] --> B[Lấy mẫu T frame]
-    B --> C[ResNet50 shared]
-    C --> D["f1 ... fT"]
-    D --> E[BiLSTM]
-    E --> F[Temporal Attention]
-    F --> G[Softmax]
-    G --> H[Violence / Non-violence]
-```
-
-Công thức gọn:
-
-\[
-f_t = \mathrm{ResNet50}(x_t),\quad
-H = \mathrm{BiLSTM}(f_{1:T}),\quad
-z = \sum_t \alpha_t h_t,\quad
-\hat{y} = \mathrm{softmax}(W z)
-\]
-
-\(\alpha_t\) là trọng số attention tại frame \(t\).
-
----
-
-## 3. Luồng xử lý (từng bước)
-
-Mỗi bước là một script, chạy lần lượt:
-
-```bash
-python -m src.pipeline.run --config configs/demo.yaml
-```
-
-Hoặc từng bước:
-
-```bash
-python -m src.pipeline.step01_collect
-python -m src.pipeline.step02_preprocess
-python -m src.pipeline.step03_clips
-python -m src.pipeline.step04_spatial
-python -m src.pipeline.step05_temporal
-python -m src.pipeline.step06_train
-python -m src.pipeline.step07_evaluate
-python -m src.pipeline.step08_infer
-```
-
-`configs/demo.yaml` tạo 20 video tổng hợp để chạy thử trên CPU. Khi có dataset thật, đặt video vào `data/raw/` và dùng `configs/default.yaml`.
-
-| Bước | Việc làm | Script | Kết quả |
-|------|----------|--------|---------|
-| 1 | Thu thập / kiểm kê video 2 lớp | `step01_collect` | `step01_inventory.csv` |
-| 2 | Trích frame + chia 70/15/15 | `step02_preprocess` | `data/processed`, `data/splits` |
-| 3 | Lấy mẫu T frame, resize, chuẩn hóa | `step03_clips` | `data/clips/*.pt` |
-| 4 | CNN không gian ResNet50 → 2048-D | `step04_spatial` | `data/features/*.npy` |
-| 5 | BiLSTM + attention (kiểm tra forward) | `step05_temporal` | `step05_attention_untrained.png` |
-| 6 | Huấn luyện LSTM trên đặc trưng đã cache | `step06_train` | `checkpoints/best.pt` |
-| 7 | Accuracy, F1, AUC, confusion matrix | `step07_evaluate` | `step07_metrics.json` |
-| 8 | Suy luận cửa sổ trượt | `step08_infer` | `prediction.json` |
-
-### Bước 1 — Dữ liệu
-
-Đặt video theo cấu trúc:
-
-```
-data/raw/
-  violence/
-    clip001.mp4
-  non_violence/
-    clip001.mp4
-```
-
-Bộ dữ liệu thường dùng cho khóa luận:
-
-- **Hockey Fight** (~1000 clip, cân bằng)
-- **Movies Fight** (bạo lực điện ảnh)
-- **RLVS** — Real Life Violence Situations (2000 clip)
-- **RWF-2000** (camera giám sát)
-
-### Bước 2 — Tiền xử lý
-
-```bash
-python -m src.prepare_dataset --config configs/default.yaml
-```
-
-Tạo `data/processed/<class>/<video_id>/*.jpg` và `data/splits/{train,val,test}.csv`.
-
-Chỉ dùng file video gốc, không trích sẵn frame:
-
-```bash
-python -m src.prepare_dataset --no-extract
-```
-
-### Bước 3–6 — Huấn luyện
-
-```bash
-python -m src.train --config configs/default.yaml
-```
-
-Checkpoint tốt nhất: `checkpoints/best.pt`. Đường cong loss/F1: `reports/outputs/training_curves.png`.
-
-Backbone dùng learning rate nhỏ hơn LSTM (`backbone_lr`) để không phá đặc trưng ImageNet.
-
-### Bước 7 — Đánh giá
-
-```bash
-python -m src.evaluate --checkpoint checkpoints/best.pt --split test
-```
-
-### Bước 8 — Suy luận
-
-Video dài được cắt cửa sổ 16 frame, bước 8 frame. Nhãn cuối = trung bình xác suất các clip, so với ngưỡng 0.5.
-
-```bash
-python -m src.infer --video path/to/video.mp4 --checkpoint checkpoints/best.pt
-```
-
-Kết quả: `reports/outputs/infer/prediction.json` và ảnh attention `attention_best_clip.png`.
-
----
-
-## 4. Cài đặt
-
-Cần Python 3.10+ và (khuyến nghị) GPU CUDA.
-
-```bash
-cd violence-detection
+```powershell
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+python -m uvicorn src.api:app --host 127.0.0.1 --port 8000
 ```
 
-Kiểm tra mô hình chạy được (không cần dataset):
+Có thể chạy `run_web.bat` sau khi kích hoạt môi trường Python.
 
-```bash
-python -m src.smoke_test
+- Upload: `http://127.0.0.1:8000/`
+- Webcam: `http://127.0.0.1:8000/live`
+- Lịch sử: `http://127.0.0.1:8000/history`
+- Trạng thái model: `http://127.0.0.1:8000/health`
+
+Web đọc `checkpoints/best.pt` khi khởi động. Sau khi thay checkpoint, cần restart web.
+Kiến trúc và ngưỡng trong checkpoint được ưu tiên so với `configs/default.yaml`.
+
+## 2. Train trên Kaggle
+
+Mở `notebooks/kaggle_train_cnn_lstm.ipynb`. Notebook chứa model, tiền xử lý,
+huấn luyện, chọn ngưỡng và đánh giá; không cần upload thư mục `src` lên Kaggle.
+
+1. Add Input AIRTLab với thư mục `non-violent/cam1`, `non-violent/cam2`, `violent/cam1`, `violent/cam2`.
+2. Giữ `DATA_MODE='airtlab'`, kiểm tra `DATA_ROOT` đã điền; đặt `INIT_CHECKPOINT` nếu fine-tune từ checkpoint cũ.
+3. Bật GPU và chạy các cell theo thứ tự.
+4. Tải `best.pt` cùng báo cáo trong thư mục Output `webcam_cnn_lstm`.
+5. Chép checkpoint về `checkpoints/best.pt` rồi restart web.
+
+Chế độ AIRTLab tự tạo `manifest.csv` trong Output và chia theo cặp camera cùng tình huống.
+Nếu một góc quay ngắn hơn 2,25 giây, cả cặp bị loại và ghi vào `excluded_airtlab.csv`.
+Các số liệu ở chế độ này là kết quả **AIRTLab/external**, chưa phải độ chính xác webcam thật.
+Đây là chia theo tình huống, không bảo đảm độc lập theo người vì thiếu ID diễn viên/buổi quay.
+
+Khi có video webcam, đổi `DATA_MODE='manifest'` và chỉnh `MANIFEST_PATH` tới CSV của bạn.
+Manifest có các cột:
+
+```csv
+path,label,group_id,split,domain
+videos/session01_normal.mp4,0,session01,train,webcam
+videos/session01_fight.mp4,1,session01,train,webcam
 ```
 
----
+Đây chỉ là ví dụ định dạng. Cần đủ hai lớp cho cả train, validation và test webcam.
 
-## 5. Cấu hình chính (`configs/default.yaml`)
+- Nhãn: `0 = non_violence`, `1 = violence`.
+- `path` tương đối với thư mục chứa manifest.
+- `group_id` gộp các clip cùng người/buổi quay/video nguồn để tránh lẫn giữa các tập.
+- `split`: `train`, `val`, `test`.
+- `domain`: `webcam` hoặc `external` cho dữ liệu ngoài như RLVS.
 
-| Tham số | Mặc định | Ý nghĩa |
-|---------|----------|---------|
-| `data.num_frames` | 16 | Độ dài clip T |
-| `data.image_size` | 224 | Kích thước frame |
-| `model.backbone` | resnet50 | CNN không gian |
-| `model.lstm_hidden` | 512 | Số đơn vị LSTM |
-| `model.bidirectional` | true | BiLSTM |
-| `model.use_attention` | true | Attention thời gian |
-| `model.freeze_backbone` | false | Đóng băng CNN (GPU yếu: đặt `true`) |
-| `train.batch_size` | 8 | Giảm còn 4 nếu hết VRAM |
-| `infer.threshold` | 0.5 | Ngưỡng violence |
+Video cần có nhãn nhất quán theo đoạn, FPS hợp lệ và dài ít nhất 2,25 giây.
+Notebook lấy 16 frame cách nhau 150 ms, chọn checkpoint và ngưỡng bằng validation của domain tương ứng,
+sau đó đánh giá riêng trên test. Dữ liệu gốc tại `data/raw` được giữ để chuẩn bị Input khi cần;
+notebook không tự đọc thư mục này. Manifest webcam cần chuẩn bị thủ công.
 
----
+## 3. Quay video và kiểm tra
 
-## 6. Cấu trúc mã nguồn
+Quay một clip webcam:
 
-```
-violence-detection/
-  configs/default.yaml
-  src/
-    prepare_dataset.py
-    train.py
-    evaluate.py
-    infer.py
-    models/cnn_lstm.py
-    data/preprocess.py
-    data/dataset.py
-    data/transforms.py
-    utils/
-  data/raw/
-  data/processed/
-  data/splits/
-  checkpoints/
-  reports/outputs/
+```powershell
+python record_webcam.py --output data/webcam_tests/test01.mp4 --seconds 10
 ```
 
----
+Kiểm tra model và notebook bằng bộ kiểm thử offline:
 
-## 7. Gợi ý viết khóa luận
+```powershell
+python -m unittest discover -s tests -p test_kaggle_notebook.py -v
+```
 
-- **Chương cơ sở lý thuyết:** CNN, LSTM, attention, đặc trưng không gian vs thời gian.
-- **Chương phương pháp:** đúng pipeline 8 bước và sơ đồ kiến trúc ở mục 2–3.
-- **Chương thực nghiệm:** so sánh (1) chỉ CNN + pooling, (2) CNN–LSTM, (3) CNN–LSTM–Attention; báo cáo F1 và AUC trên test.
-- **Hạn chế:** lấy mẫu đều có thể bỏ qua hành động rất ngắn; dữ liệu nhỏ dễ overfit; nhầm với thể thao đối kháng.
+Video tổng hợp trong kiểm thử chỉ dùng để xác minh code, không đo độ chính xác thực tế.
 
-Hướng mở rộng nếu còn thời gian: optical flow (two-stream), I3D, SlowFast, hoặc fusion attention giữa RGB và chuyển động.
+Có thể suy luận file bằng CLI:
+
+```powershell
+python -m src.infer --video data/webcam_tests/test01.mp4 --checkpoint checkpoints/best.pt
+```
+
+**Giới hạn hiện tại:** đường upload/CLI lấy cửa sổ frame liên tiếp, còn notebook webcam
+lấy frame theo thời gian. Kết quả hai luồng chưa thể so trực tiếp. Webcam lấy khoảng mỗi
+150 ms, giữ 16 frame; nên đánh giá sau khi buffer đầy. Frontend vẫn cho request từ 8 frame
+ở giai đoạn khởi động. Khung HOG trên giao diện là khung người hoặc khung mặc định,
+không xác định riêng người nào đang bạo lực.
+
+## 4. Cấu trúc đang sử dụng
+
+```text
+notebooks/kaggle_train_cnn_lstm.ipynb   Train và đánh giá trên Kaggle
+src/api.py                           Trang web và API
+src/infer.py                         Nạp checkpoint, suy luận video/frame
+src/history.py                       SQLite và lưu ảnh/video lịch sử
+src/models/cnn_lstm.py                ResNet18/50 + BiLSTM + Attention
+src/data/preprocess.py               Chia cửa sổ video cho suy luận
+src/data/transforms.py               Resize/crop và chuẩn hóa frame
+src/utils/config.py                  Đọc cấu hình và đường dẫn project
+src/utils/viz.py                     Vẽ attention cho video upload
+src/smoke_test.py                     Kiểm tra forward model không cần dataset
+web/                                 Giao diện upload, webcam, lịch sử
+configs/default.yaml                 Cấu hình dự phòng cho backend
+checkpoints/best.pt                   Model web hiện sử dụng
+data/raw/                            Video nguồn để chuẩn bị dataset
+data/webcam_tests/                    Video webcam để kiểm tra
+data/history.db                      Lịch sử nhận diện
+storage/                             Video/ảnh được lịch sử sử dụng
+reports/outputs/                      Kết quả suy luận
+tests/test_kaggle_notebook.py          Kiểm thử notebook và tương thích backend
+record_webcam.py                      Công cụ quay webcam
+run_web.bat                          Khởi động web trên Windows
+```
+
+Luồng train local/pipeline demo cũ đã được gỡ; huấn luyện và đánh giá dataset thực hiện trong notebook Kaggle.

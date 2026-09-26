@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Upload · Violence Detection{% endblock %}
+{% block content %}
+<section class="hero dashboard-hero">
+  <h1 data-i18n="upload_h1">Phân tích video thông minh</h1>
+  <p data-i18n="upload_p">Tải video lên để kiểm tra hành vi bạo lực bằng mô hình CNN–LSTM.</p>
+</section>
+<section class="card grid-actions upload-card">
+  <div class="section-heading"><div><h2 data-i18n="section_check_h2">Kiểm tra video</h2><p data-i18n="section_check_p">Chọn tệp MP4, AVI, MOV hoặc kéo thả vào khung bên dưới.</p></div><span class="status-dot" data-i18n="status_ready">Sẵn sàng</span></div>
+  <label class="pick drop-zone" for="videoInput">
+    <span class="upload-icon">↑</span>
+    <span><b data-i18n="choose_video_title">Chọn video</b><small data-i18n="choose_video_hint">Nhấn để duyệt tệp từ máy tính</small></span>
+    <input id="videoInput" type="file" accept="video/*"/>
+  </label>
+  <div id="fileMeta" class="file-meta" hidden></div>
+  <video id="videoPreview" class="preview" controls playsinline></video>
+  <div class="btn-row">
+    <button id="btnDetect" type="button" data-i18n="btn_detect">Phát hiện bạo lực</button>
+    <button id="btnReset" class="secondary" type="button" data-i18n="btn_reset">Làm mới</button>
+  </div>
+  <div id="alertBox" class="alert" data-i18n="alert_violence">⚠ CẢNH BÁO BẠO LỰC ĐÃ PHÁT HIỆN</div>
+  <div id="result" class="result muted" data-i18n="no_result_yet">Chưa có kết quả</div>
+  <div id="attn" class="attn"></div>
+  <div id="resultActions" class="result-actions" hidden></div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const input = document.getElementById("videoInput");
+  const preview = document.getElementById("videoPreview");
+  const btn = document.getElementById("btnDetect");
+  const result = document.getElementById("result");
+  const alertBox = document.getElementById("alertBox");
+  const attn = document.getElementById("attn");
+  const fileMeta = document.getElementById("fileMeta");
+  const resetBtn = document.getElementById("btnReset");
+  const resultActions = document.getElementById("resultActions");
+  const t = (key) => (window.VD ? window.VD.t(key) : key);
+  let objectUrl = null;
+
+  input.addEventListener("change", () => {
+    const file = input.files[0];
+    alertBox.classList.remove("show");
+    attn.innerHTML = "";
+    resultActions.hidden = true;
+    if (!file) {
+      preview.style.display = "none";
+      result.textContent = t("no_result_yet");
+      result.className = "result muted";
+      return;
+    }
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = URL.createObjectURL(file);
+    preview.src = objectUrl;
+    preview.load();
+    preview.style.display = "block";
+    fileMeta.hidden = false;
+    fileMeta.textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)} MB`;
+    result.textContent = t("ready_to_detect");
+    result.className = "result muted";
+  });
+
+  btn.addEventListener("click", async () => {
+    const file = input.files[0];
+    if (!file) { alert(t("choose_video_first")); return; }
+    btn.disabled = true;
+    result.textContent = t("detecting");
+    result.className = "result muted";
+    alertBox.classList.remove("show");
+    attn.innerHTML = "";
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("source", "upload");
+    try {
+      const r = await fetch("/predict", { method: "POST", body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail || j));
+      const pct = (j.confidence * 100).toFixed(1);
+      const bad = j.pred_class === "violence";
+      const predLabel = bad ? t("pred_violence") : t("pred_nonviolence");
+      result.innerHTML = `${t("result_label")}<span class="${bad ? "violence" : "ok"}">${predLabel}</span><br/>${t("confidence_label")}${pct}%<br/><span class="muted">${t("saved_history_prefix")}${j.history_id} · ${j.created_at || ""}</span>`;
+      result.className = "result";
+      if (bad) alertBox.classList.add("show");
+      if (j.attention_url) {
+        attn.innerHTML = `<p class="muted">${t("attention_label")}</p><img src="${j.attention_url}" alt="attention"/>`;
+      }
+      if (j.video_url) {
+        resultActions.hidden = false;
+        resultActions.innerHTML = `<a class="btn secondary" href="${j.video_url}" target="_blank">${t("view_saved_video")}</a><a class="btn" href="${j.video_url}" download>${t("download_result")}</a>`;
+      }
+    } catch (e) {
+      result.textContent = t("error_label") + e.message;
+      result.className = "result violence";
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  resetBtn.addEventListener("click", () => {
+    input.value = ""; preview.removeAttribute("src"); preview.style.display = "none";
+    fileMeta.hidden = true; alertBox.classList.remove("show"); attn.innerHTML = ""; resultActions.hidden = true;
+    result.textContent = t("no_result_yet"); result.className = "result muted";
+  });
+})();
+</script>
+{% endblock %}

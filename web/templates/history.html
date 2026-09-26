@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Lịch sử · Violence Detection{% endblock %}
+{% block content %}
+<section class="hero">
+  <h1 data-i18n="history_h1">Lịch sử nhận diện</h1>
+  <p data-i18n="history_p">Ngày giờ · nguồn · nhãn · độ tin cậy · xem lại &amp; tải video đã lưu</p>
+</section>
+<section class="card">
+  {% if not rows %}
+  <div class="empty" data-i18n="history_empty">Chưa có bản ghi. Hãy upload hoặc bật camera trước.</div>
+  {% else %}
+  <div class="history-toolbar">
+    <p class="history-count"><span id="historyCountNum">{{ total }}</span><span data-i18n="history_count_suffix"> bản ghi gần nhất</span></p>
+    <button class="table-btn delete-all" type="button" onclick="deleteAllHistory()" data-i18n="btn_delete_all">Xóa toàn bộ lịch sử</button>
+  </div>
+  <table class="history">
+    <thead>
+      <tr>
+        <th data-i18n="th_id">ID</th><th data-i18n="th_datetime">Ngày giờ</th><th data-i18n="th_source">Nguồn</th><th data-i18n="th_label">Nhãn</th><th data-i18n="th_confidence">Độ tin cậy</th><th data-i18n="th_video">Video</th><th data-i18n="th_actions">Thao tác</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.id }}</td>
+        <td>
+          <div class="history-meta">
+            <time class="time" datetime="{{ r.created_at }}">{{ r.time_display }}</time>
+            <span class="date">{{ r.date_display }}</span>
+          </div>
+        </td>
+        <td>
+          {% set src_key = 'source_upload' if r.source == 'upload' else ('source_webcam' if r.source == 'webcam' else ('source_rtsp' if r.source == 'rtsp' else '')) %}
+          {% if src_key %}<span data-i18n="{{ src_key }}">{{ r.source }}</span>{% else %}{{ r.source }}{% endif %}
+        </td>
+        <td>
+          {% if r.pred_class == 'violence' %}
+          <span class="pill pill-violence" data-i18n="pill_violence">Bạo lực</span>
+          {% else %}
+          <span class="pill pill-ok" data-i18n="pill_ok">Không bạo lực</span>
+          {% endif %}
+        </td>
+        <td>
+          <div class="prob-wrap">
+            <span class="prob-bar"><span class="{{ 'high' if r.pred_class == 'violence' else '' }}" style="width: {{ r.prob_pct }}%;"></span></span>
+            <span class="prob-text">{{ r.prob_pct }}%</span>
+          </div>
+        </td>
+        <td class="preview-cell">
+          {% if r.video_url %}
+          <video preload="metadata" controls muted>
+            <source src="{{ r.video_url }}">
+          </video>
+          {% else %}
+          <div class="no-preview" data-i18n="no_video">Không có video</div>
+          {% endif %}
+        </td>
+        <td>
+          {% if r.video_url %}
+          <div class="history-actions">
+            <a class="table-btn" href="{{ r.video_url }}" target="_blank" rel="noopener" data-i18n="btn_view">Xem</a>
+            <a class="table-btn download" href="{{ r.video_url }}" download title="Tải video về máy">⬇ <span data-i18n="btn_download">Tải xuống</span></a>
+            <button class="table-btn delete" type="button" onclick="deleteHistory({{ r.id }}, this)" data-i18n="btn_delete">Xóa</button>
+          </div>
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+function vdT(key) { return (window.VD ? window.VD.t(key) : key); }
+
+async function deleteHistory(id, button) {
+  if (!confirm(vdT("confirm_delete_one").replace("{id}", id))) return;
+  button.disabled = true;
+  const response = await fetch(`/history/${id}/delete`, {method: "POST"});
+  if (!response.ok) { alert(vdT("err_delete_one")); button.disabled = false; return; }
+  button.closest("tr").remove();
+}
+
+async function deleteAllHistory() {
+  if (!confirm(vdT("confirm_delete_all"))) return;
+  const response = await fetch("/history/delete-all", {method: "POST"});
+  if (!response.ok) { alert(vdT("err_delete_all")); return; }
+  window.location.reload();
+}
+</script>
+{% endblock %}

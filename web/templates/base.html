@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{% block title %}Violence Detection{% endblock %}</title>
+  <script>
+    (function () {
+      try {
+        var theme = localStorage.getItem("vd_theme") || "light";
+        document.documentElement.setAttribute("data-theme", theme);
+        var lang = localStorage.getItem("vd_lang") || "vi";
+        document.documentElement.lang = lang;
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/css/app.css?v=6"/>
+  <script src="/static/js/ui.js?v=2" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/">VD Monitor <span>CNN–LSTM</span></a>
+      <nav class="nav">
+        <a href="/" class="{% if active == 'upload' %}active{% endif %}" data-i18n="nav_upload">Tải lên</a>
+        <a href="/live" class="{% if active == 'live' %}active{% endif %}" data-i18n="nav_camera">Camera</a>
+        <a href="/history" class="{% if active == 'history' %}active{% endif %}" data-i18n="nav_history">Lịch sử</a>
+      </nav>
+      <div class="topbar-actions">
+        <button id="themeToggleBtn" class="icon-btn" type="button" title="Đổi giao diện sáng/tối">Tối</button>
+        <button id="langToggleBtn" class="icon-btn" type="button" title="Switch language / Đổi ngôn ngữ">EN</button>
+      </div>
+    </div>
+  </header>
+  <main class="wrap">
+    {% block content %}{% endblock %}
+    <p class="footer" data-i18n="footer_text">Phát hiện bạo lực trong video · PyTorch CNN–LSTM · localhost demo</p>
+  </main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

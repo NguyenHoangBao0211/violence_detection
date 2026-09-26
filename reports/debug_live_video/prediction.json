@@ -1,0 +1,24 @@
+{
+  "video": "C:\\Users\\ASUS\\Downloads\\live_5d9626099d_violence (1).mp4",
+  "n_frames": 32,
+  "n_clips": 3,
+  "violence_prob_mean": 0.15297513206799826,
+  "violence_prob_max": 0.18360966444015503,
+  "threshold": 0.5,
+  "pred_label": 0,
+  "pred_class": "non_violence",
+  "clip_probs": [
+    0.14243005216121674,
+    0.18360966444015503,
+    0.13288567960262299
+  ],
+  "boxes": [
+    {
+      "x": 0.4713541666666667,
+      "y": 0.2037037037037037,
+      "w": 0.22916666666666666,
+      "h": 0.7962962962962963,
+      "score": 0.7545462320558727
+    }
+  ]
+}

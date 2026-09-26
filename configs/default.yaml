@@ -1,17 +1,9 @@
-seed: 42
-
 data:
-  raw_dir: data/raw
-  processed_dir: data/processed
-  splits_dir: data/splits
   num_frames: 16
   image_size: 224
   classes:
     - non_violence
     - violence
-  train_ratio: 0.70
-  val_ratio: 0.15
-  test_ratio: 0.15
 
 model:
   backbone: resnet50
@@ -21,22 +13,11 @@ model:
   lstm_layers: 2
   bidirectional: true
   dropout: 0.5
-  use_attention: true
+  use_attention: false
   num_classes: 2
-
-train:
-  batch_size: 8
-  epochs: 30
-  lr: 0.0001
-  backbone_lr: 0.00001
-  weight_decay: 0.0001
-  num_workers: 2
-  patience: 8
-  use_amp: true
-  checkpoint_dir: checkpoints
-  log_dir: reports/outputs
 
 infer:
   window_frames: 16
   stride: 8
-  threshold: 0.5
+  # Cần 3 cửa sổ liên tiếp đạt 60% mới kết luận bạo lực.
+  threshold: 0.6
