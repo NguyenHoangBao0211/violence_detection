@@ -11,10 +11,12 @@ Cần Python 3.10+ và checkpoint PyTorch tương thích.
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-python -m uvicorn src.api:app --host 127.0.0.1 --port 8000
+python -m uvicorn src.api:app --host 127.0.0.1 --port 8000 --loop asyncio:SelectorEventLoop
 ```
 
 Có thể chạy `run_web.bat` sau khi kích hoạt môi trường Python.
+Trên Windows nên giữ `--loop asyncio:SelectorEventLoop`: vòng lặp mặc định (Proactor) in lỗi
+`WinError 10054` và có thể ngừng nhận kết nối khi trình duyệt ngắt request (tắt camera, tải lại trang).
 
 - Upload: `http://127.0.0.1:8000/`
 - Webcam: `http://127.0.0.1:8000/live`
