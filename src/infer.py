@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -21,6 +23,12 @@ os.environ.setdefault(
 )
 
 _yolo_person_model = None
+
+# One model call at a time. On CPU, a long upload and realtime webcam requests
+# running in parallel oversubscribe the cores and every request gets several
+# times slower. Uploads take the lock per window, so a webcam request waits
+# at most for one window instead of the whole video.
+_infer_lock = threading.Lock()
 
 
 def _get_yolo_person_model():
@@ -158,7 +166,7 @@ def _sample_clip(frames: list[np.ndarray], num_frames: int) -> list[np.ndarray]:
     return [frames[int(i)] for i in idxs]
 
 
-def detect_persons(frame_rgb: np.ndarray) -> list[dict]:
+def detect_persons(frame_rgb: np.ndarray, imgsz: int = 640) -> list[dict]:
     """Detect people with YOLO11n, with HOG as a local fallback."""
     h, w = frame_rgb.shape[:2]
     yolo = _get_yolo_person_model()
@@ -167,7 +175,7 @@ def detect_persons(frame_rgb: np.ndarray) -> list[dict]:
             source=frame_rgb,
             classes=[0],
             conf=0.25,
-            imgsz=640,
+            imgsz=imgsz,
             verbose=False,
             device=0 if torch.cuda.is_available() else "cpu",
         )[0]
@@ -247,31 +255,28 @@ def run_inference_frames(
     with_boxes: bool = True,
 ) -> dict:
     """Classify a short RGB frame clip and optionally detect person boxes."""
+    started = time.perf_counter()
     window = cfg["infer"].get("window_frames", cfg["data"]["num_frames"])
     threshold = cfg["infer"].get("threshold", 0.5)
     transform = eval_transform(cfg["data"]["image_size"], x3d=cfg.get("model_type") == "x3d_m")
     clip = _sample_clip(frames, window)
-    tensor = transform(clip).unsqueeze(0).to(device)
-    logits, _attn = model(tensor)
+    last = frames[-1]
+    with _infer_lock:
+        # Webcam frames arrive downscaled (<=384px), so YOLO at 640 only
+        # upsamples them and wastes time.
+        boxes = detect_persons(last, imgsz=384) if with_boxes else []
+        # Realtime runs the classifier once: on the YOLO person union crop when
+        # available (more pixels on the people, less background), otherwise on
+        # the full frame.
+        if boxes:
+            clip = crop_person_clip(clip, boxes)
+        tensor = transform(clip).unsqueeze(0).to(device)
+        logits, _attn = model(tensor)
     probs = torch.softmax(logits, dim=1)[0]
     violence_prob = float(probs[1].item())
     non_prob = float(probs[0].item())
     label = int(violence_prob >= threshold)
     class_name = cfg["data"]["classes"][label]
-
-    last = frames[-1]
-    boxes = detect_persons(last) if with_boxes else []
-    # For webcam mode, use the YOLO person union crop when available. This
-    # gives distant subjects more pixels and removes most background noise.
-    if with_boxes and boxes:
-        cropped = crop_person_clip(clip, boxes)
-        tensor = transform(cropped).unsqueeze(0).to(device)
-        logits, _attn = model(tensor)
-        probs = torch.softmax(logits, dim=1)[0]
-        violence_prob = float(probs[1].item())
-        non_prob = float(probs[0].item())
-        label = int(violence_prob >= threshold)
-        class_name = cfg["data"]["classes"][label]
     return {
         "n_frames": len(frames),
         "n_clips": 1,
@@ -284,6 +289,7 @@ def run_inference_frames(
         "boxes": boxes,
         "frame_w": int(last.shape[1]),
         "frame_h": int(last.shape[0]),
+        "latency_ms": round((time.perf_counter() - started) * 1000),
     }
 
 
@@ -300,21 +306,22 @@ def run_inference(model, cfg: dict, device: torch.device, video_path: str | Path
     clip_attn = []
     for idxs in windows:
         clip_np = [frames[int(i)] for i in idxs]
-        tensor = transform(clip_np).unsqueeze(0).to(device)
-        logits, attn = model(tensor)
-        full_prob = torch.softmax(logits, dim=1)[0, 1].item()
-        prob = full_prob
+        with _infer_lock:
+            tensor = transform(clip_np).unsqueeze(0).to(device)
+            logits, attn = model(tensor)
+            full_prob = torch.softmax(logits, dim=1)[0, 1].item()
+            prob = full_prob
 
-        # Upload ensemble: combine the original scene with a YOLO person crop.
-        # The full-frame branch keeps compatibility with the training data;
-        # the crop branch gives distant people more useful pixels.
-        boxes = detect_persons(clip_np[-1])
-        if boxes:
-            cropped = crop_person_clip(clip_np, boxes)
-            crop_tensor = transform(cropped).unsqueeze(0).to(device)
-            crop_logits, _ = model(crop_tensor)
-            crop_prob = torch.softmax(crop_logits, dim=1)[0, 1].item()
-            prob = 0.4 * full_prob + 0.6 * crop_prob
+            # Upload ensemble: combine the original scene with a YOLO person crop.
+            # The full-frame branch keeps compatibility with the training data;
+            # the crop branch gives distant people more useful pixels.
+            boxes = detect_persons(clip_np[-1])
+            if boxes:
+                cropped = crop_person_clip(clip_np, boxes)
+                crop_tensor = transform(cropped).unsqueeze(0).to(device)
+                crop_logits, _ = model(crop_tensor)
+                crop_prob = torch.softmax(crop_logits, dim=1)[0, 1].item()
+                prob = 0.4 * full_prob + 0.6 * crop_prob
 
         clip_probs.append(prob)
         clip_attn.append(None if attn is None else attn[0].cpu().numpy())
@@ -341,6 +348,9 @@ def run_inference(model, cfg: dict, device: torch.device, video_path: str | Path
     label = int(event_detected)
     class_name = cfg["data"]["classes"][label]
 
+    with _infer_lock:
+        last_boxes = detect_persons(frames[-1])
+
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     result = {
@@ -356,7 +366,7 @@ def run_inference(model, cfg: dict, device: torch.device, video_path: str | Path
         "pred_label": label,
         "pred_class": class_name,
         "clip_probs": clip_probs,
-        "boxes": detect_persons(frames[-1]),
+        "boxes": last_boxes,
     }
     (out_dir / "prediction.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
 

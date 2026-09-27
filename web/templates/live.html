@@ -45,10 +45,12 @@
   // mẫu webcam ở 150ms/khung khiến 16 khung trải dài tới 2.4 giây (~6.7fps
   // hiệu dụng) — chuyển động trông "chậm/rời rạc" hơn nhiều so với lúc train
   // nên webcam hay nhận sai (trong khi video tải lên vẫn đúng vì đọc đúng
-  // khung liên tiếp ở fps gốc). Giảm xuống 40ms (~25fps) để khớp lại tốc độ
-  // chuyển động với dữ liệu train.
+  // khung liên tiếp ở fps gốc). Lấy MỌI khung của camera (~30fps): với
+  // requestVideoFrameCallback ở 30fps (33ms/khung), ngưỡng 40ms trước đây bỏ
+  // mất 1 khung mỗi 2 khung → 16 khung trải ~1.07s, chuyển động nhanh gấp đôi
+  // so với clip train (16 khung liên tiếp ≈ 0.53s ở 30fps RWF-2000).
   const NEED_FRAMES = 16;
-  const SAMPLE_MS = 40;
+  const SAMPLE_MS = 30;
   // Cập nhật nhanh hơn để bám sát thời điểm bắt đầu/kết thúc hành động.
   const PREDICT_EVERY_MS = 220;
   // Khung hình gửi lên server để phân tích được thu nhỏ về tối đa MAX_SEND_SIDE px
@@ -56,10 +58,13 @@
   // vẽ + nén JPEG cả khung 1280x720 ~5-6 lần/giây khiến luồng camera bị giật/đơ;
   // thu nhỏ trước khi nén giảm ~10 lần khối lượng tính toán trên main thread.
   const MAX_SEND_SIDE = 384;
-  // Số cửa sổ gần nhất dùng để làm mượt xác suất trước khi so ngưỡng — trước
-  // đây bị giới hạn còn 1 (mất tác dụng làm mượt) khiến nhãn nhảy theo từng
-  // dự đoán đơn lẻ, đặc biệt lúc không có người trong khung.
-  const PROB_HISTORY_SIZE = 5;
+  // Làm mượt xác suất theo THỜI GIAN chứ không theo số lần dự đoán: chỉ lấy
+  // trung bình các kết quả trong SMOOTH_WINDOW_MS gần nhất (tối đa
+  // PROB_HISTORY_SIZE kết quả). Trước đây lấy 5 kết quả cuối — khi server trả
+  // chậm, các kết quả cũ (vd. lúc phòng còn trống) nằm lại trong trung bình
+  // hàng chục giây và kéo xác suất xuống, nên không bao giờ báo bạo lực kịp.
+  const SMOOTH_WINDOW_MS = 1500;
+  const PROB_HISTORY_SIZE = 3;
 
   let stream = null;
   let running = false;
@@ -74,10 +79,9 @@
   let recordingChunks = [];
   let nonViolenceStreak = 0;
   let violenceStreak = 0;
-  // Cần 3 cửa sổ liên tiếp vượt ngưỡng mới báo bạo lực, tránh nhiễu 1 khung lẻ
-  // (đặc biệt khi khung hình trống/không có người — xác suất thô dao động quanh
-  // ngưỡng) làm nhãn nhảy loạn xạ giữa hai lớp.
-  const START_AFTER_VIOLENCE = 3;
+  // Cần 2 lần dự đoán liên tiếp vượt ngưỡng mới báo bạo lực, tránh nhiễu 1 cửa
+  // sổ lẻ nhưng vẫn báo trong ~1-1.5 giây (mỗi lần dự đoán ~0.6s trên CPU).
+  const START_AFTER_VIOLENCE = 2;
   // Kết thúc event ngay ở cửa sổ kế tiếp không còn bạo lực; tránh trễ 5-10 giây.
   const END_AFTER_NONVIOLENCE = 1;
   let testRecorder = null;
@@ -215,11 +219,12 @@
       const j = await r.json();
       if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : t("detect_error_generic"));
       const rawProbability = Number(j.violence_prob_mean || 0);
-      probabilityHistory.push(rawProbability);
-      // Upload lấy trung bình nhiều cửa sổ; Camera mô phỏng bằng 5 cửa sổ gần nhất.
-      if (probabilityHistory.length > PROB_HISTORY_SIZE) probabilityHistory.shift();
-      // Giống Upload: lấy trung bình nhiều cửa sổ gần nhất trước khi kết luận.
-      const meanProbability = probabilityHistory.reduce((a, b) => a + b, 0) / probabilityHistory.length;
+      const nowMs = performance.now();
+      probabilityHistory.push({ p: rawProbability, t: nowMs });
+      probabilityHistory = probabilityHistory
+        .filter((h) => nowMs - h.t <= SMOOTH_WINDOW_MS)
+        .slice(-PROB_HISTORY_SIZE);
+      const meanProbability = probabilityHistory.reduce((a, h) => a + h.p, 0) / probabilityHistory.length;
       const candidateViolence = meanProbability >= Number(j.threshold ?? 0.6);
       violenceStreak = candidateViolence ? violenceStreak + 1 : 0;
       // Cần 3 cửa sổ liên tiếp vượt ngưỡng để xác nhận, tránh nhầm chuyển động nhẹ.
@@ -249,7 +254,8 @@
       const predLabel = bad ? t("overlay_violence") : t("overlay_nonviolence");
       status.innerHTML = `<span class="${bad ? "violence" : "ok"}">${predLabel}</span>`;
       status.className = "result";
-      hud.innerHTML = `<span class="violence">${t("overlay_violence")} ${vPct}%</span> · <span class="ok">${t("overlay_nonviolence")} ${nPct}%</span>`;
+      const latency = j.latency_ms != null ? ` · <span class="muted">${j.latency_ms} ms</span>` : "";
+      hud.innerHTML = `<span class="violence">${t("overlay_violence")} ${vPct}%</span> · <span class="ok">${t("overlay_nonviolence")} ${nPct}%</span>${latency}`;
       hud.className = "hud";
       if (bad) alertBox.classList.add("show");
       else alertBox.classList.remove("show");
