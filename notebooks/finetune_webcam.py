@@ -91,8 +91,21 @@ def extra_clips():
     return out
 
 
-def read_frames(path, max_side=384):
-    """All frames (RGB), downscaled like the webcam page sends them."""
+# The Camera page sends every frame as JPEG quality 0.7. The model turned out to
+# be very sensitive to JPEG artefacts (a static empty room went from 0.05 to
+# 0.96 "violence" after JPEG encoding), so train with random JPEG quality and
+# validate at the live quality.
+LIVE_JPEG_QUALITY = 70
+TRAIN_JPEG_QUALITY = (50, 95)
+TRAIN_JPEG_PROB = 0.8
+
+
+def jpeg_roundtrip(bgr, quality):
+    return cv2.imdecode(cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, int(quality)])[1], cv2.IMREAD_COLOR)
+
+
+def read_frames(path, max_side=384, jpeg_quality=None):
+    """All frames (RGB), downscaled and optionally JPEG-encoded like the webcam page sends them."""
     cap = cv2.VideoCapture(str(path)); frames = []
     while True:
         ok, bgr = cap.read()
@@ -101,6 +114,8 @@ def read_frames(path, max_side=384):
         h, w = bgr.shape[:2]; s = min(1.0, max_side / max(h, w))
         if s < 1.0:
             bgr = cv2.resize(bgr, (int(w * s), int(h * s)))
+        if jpeg_quality:
+            bgr = jpeg_roundtrip(bgr, jpeg_quality)
         frames.append(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
     cap.release()
     if not frames:
@@ -150,7 +165,8 @@ class TrainDataset(Dataset):
 
     def __getitem__(self, i):
         path, label = self.items[i]
-        frames = read_frames(path)
+        quality = random.randint(*TRAIN_JPEG_QUALITY) if random.random() < TRAIN_JPEG_PROB else None
+        frames = read_frames(path, jpeg_quality=quality)
         start = random.randint(0, len(frames) - T)
         return train_clip_tf(frames[start:start + T]), torch.tensor(label)
 
@@ -204,7 +220,7 @@ def set_train_mode(model):
 def clip_probs(model, items, stride=8):
     model.eval(); probs = []
     for path, _ in items:
-        frames = read_frames(path)
+        frames = read_frames(path, jpeg_quality=LIVE_JPEG_QUALITY)
         starts = list(range(0, len(frames) - T + 1, stride)) or [0]
         batch = torch.stack([eval_clip_tf(frames[s:s + T]) for s in starts]).to(DEVICE)
         p = torch.softmax(model(batch)[0], dim=1)[:, 1].mean().item()

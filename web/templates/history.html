@@ -27,6 +27,7 @@
           <div class="history-meta">
             <time class="time" datetime="{{ r.created_at }}">{{ r.time_display }}</time>
             <span class="date">{{ r.date_display }}</span>
+            {% if r.note and r.note.startswith('⏱') %}<span class="date">{{ r.note }}</span>{% endif %}
           </div>
         </td>
         <td>

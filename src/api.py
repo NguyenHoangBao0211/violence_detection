@@ -226,6 +226,7 @@ def _prediction_payload(result: dict, *, history_id: int | None = None, extra: d
         "n_clips": result.get("n_clips"),
         "threshold": result.get("threshold", 0.5),
         "boxes": result.get("boxes") or [],
+        "latency_ms": result.get("latency_ms"),
         "history_id": history_id,
         "backend": _backend,
     }
@@ -267,6 +268,57 @@ def _save_live_video(rgb_frames: list[np.ndarray], result: dict) -> Path:
     finally:
         writer.release()
     return snap
+
+
+def _save_event_video(rgb_frames: list[np.ndarray], fps: float) -> Path:
+    """Write a webcam event as WebM/VP8, which browsers play in the history page
+    (OpenCV's mp4v is MPEG-4 Part 2, which browsers do not decode)."""
+    day_dir = storage / "alerts"
+    day_dir.mkdir(parents=True, exist_ok=True)
+    dest = day_dir / f"event_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}_violence.webm"
+    h, w = rgb_frames[0].shape[:2]
+    writer = cv2.VideoWriter(str(dest), cv2.VideoWriter_fourcc(*"VP80"), fps, (w, h))
+    try:
+        for rgb in rgb_frames:
+            if rgb.shape[:2] != (h, w):
+                rgb = cv2.resize(rgb, (w, h))
+            writer.write(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+    finally:
+        writer.release()
+    return dest
+
+
+@app.post("/events/webcam")
+async def save_webcam_event(
+    frames: list[UploadFile] = File(...),
+    fps: float = Form(15.0),
+    start_s: float = Form(...),
+    end_s: float = Form(...),
+    start_clock: str = Form(""),
+    end_clock: str = Form(""),
+    peak_prob: float = Form(1.0),
+) -> dict:
+    """Save one webcam violence event (start → end) sent by the Camera page.
+
+    The page already decided the event from its realtime predictions and
+    timestamps each frame, so nothing is re-classified here.
+    """
+    raw_frames = [await up.read() for up in frames]
+    rgb_frames = await run_in_threadpool(_decode_frames, raw_frames)
+    if len(rgb_frames) < 2:
+        raise HTTPException(400, "Không đọc được frame sự kiện")
+    fps = float(min(60.0, max(1.0, fps)))
+    video = await run_in_threadpool(_save_event_video, rgb_frames, fps)
+    duration = max(0.0, end_s - start_s)
+    note = f"⏱ {start_clock[:12]} → {end_clock[:12]} ({duration:.1f}s) · giây {start_s:.1f}–{end_s:.1f}"
+    hist_id = add_detection(
+        source="webcam",
+        pred_class="violence",
+        prob=float(min(1.0, max(0.0, peak_prob))),
+        video_path=video,
+        note=note,
+    )
+    return {"ok": True, "history_id": hist_id, "video_url": _rel_media(video), "duration_s": duration, "note": note}
 
 
 @app.post("/predict/live")

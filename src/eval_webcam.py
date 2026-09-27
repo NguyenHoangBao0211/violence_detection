@@ -22,7 +22,9 @@ from src.infer import load_detector, run_inference_frames
 from src.utils.config import load_config, project_root
 
 
-def read_frames(path, max_side: int = 384) -> list[np.ndarray]:
+def read_frames(path, max_side: int = 384, jpeg_quality: int = 70) -> list[np.ndarray]:
+    """Frames as the Camera page sends them: <=384px and JPEG quality 0.7.
+    The JPEG step matters: the model is sensitive to JPEG artefacts."""
     cap = cv2.VideoCapture(str(path))
     frames = []
     while True:
@@ -33,6 +35,8 @@ def read_frames(path, max_side: int = 384) -> list[np.ndarray]:
         s = min(1.0, max_side / max(h, w))
         if s < 1.0:
             bgr = cv2.resize(bgr, (int(w * s), int(h * s)))
+        if jpeg_quality:
+            bgr = cv2.imdecode(cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])[1], cv2.IMREAD_COLOR)
         frames.append(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
     cap.release()
     return frames
@@ -70,6 +74,7 @@ def main() -> None:
     parser.add_argument("--split", default="test", choices=["train", "val", "test", "all"])
     parser.add_argument("--threshold", type=float, default=None, help="default: the checkpoint's threshold")
     parser.add_argument("--no-crop", action="store_true", help="classify full frames instead of YOLO crops")
+    parser.add_argument("--jpeg", type=int, default=70, help="JPEG quality like the Camera page; 0 = off")
     parser.add_argument("--out", default="reports/outputs/eval_webcam.json")
     args = parser.parse_args()
 
@@ -78,7 +83,7 @@ def main() -> None:
         raise SystemExit(f"Không có clip nào trong {root / args.data} (split={args.split})")
     y = np.array([label for _, label in clips])
     print(f"{len(clips)} clip ({int(y.sum())} bạo lực, {int(len(y) - y.sum())} không bạo lực), split={args.split}")
-    frames = [read_frames(p) for p, _ in clips]
+    frames = [read_frames(p, jpeg_quality=args.jpeg) for p, _ in clips]
 
     results = {}
     for ckpt in args.checkpoint:

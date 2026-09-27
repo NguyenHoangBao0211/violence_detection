@@ -19,6 +19,7 @@
   <div id="alertBox" class="alert" data-i18n="alert_violence">⚠ CẢNH BÁO BẠO LỰC ĐÃ PHÁT HIỆN</div>
   <div id="status" class="result muted" data-i18n="camera_off">Chưa bật camera</div>
   <div id="hud" class="hud muted" data-i18n="hud_default">Bạo lực: —% · Không bạo lực: —%</div>
+  <div id="eventInfo" class="result" hidden></div>
   <div id="testResult" class="result muted" hidden></div>
   <div id="testResultActions" class="result-actions" hidden></div>
 </section>
@@ -46,6 +47,7 @@
   const hud = document.getElementById("hud");
   const record10Btn = document.getElementById("record10Btn");
   const testResult = document.getElementById("testResult");
+  const eventInfo = document.getElementById("eventInfo");
   const testResultActions = document.getElementById("testResultActions");
   const ctx = overlay.getContext("2d");
   const t = (key) => (window.VD ? window.VD.t(key) : key);
@@ -74,7 +76,29 @@
   // chậm, các kết quả cũ (vd. lúc phòng còn trống) nằm lại trong trung bình
   // hàng chục giây và kéo xác suất xuống, nên không bao giờ báo bạo lực kịp.
   const SMOOTH_WINDOW_MS = 1500;
-  const PROB_HISTORY_SIZE = 3;
+  const PROB_HISTORY_SIZE = 2;
+
+  // ===== Sự kiện bạo lực: từ giây bắt đầu tới giây kết thúc =====
+  // Mỗi khung hình mang thời điểm chụp; mỗi dự đoán biết cửa sổ 16 khung của nó
+  // bắt đầu/kết thúc lúc nào. Nhãn trên màn hình vẫn cần xác nhận (trễ ~1s),
+  // nhưng MỐC THỜI GIAN của sự kiện được lùi về đúng khung hình:
+  //   bắt đầu = khung đầu của cửa sổ đầu tiên vượt ngưỡng,
+  //   kết thúc = khung cuối của cửa sổ cuối cùng còn bạo lực.
+  // Cần 2 lần dự đoán liên tiếp vượt ngưỡng mới vào trạng thái bạo lực.
+  const START_AFTER_VIOLENCE = 2;
+  // Chỉ kết thúc sau 2 lần liên tiếp dưới (ngưỡng − EXIT_MARGIN): một nhịp
+  // dừng ngắn giữa trận không cắt đôi sự kiện, xác suất dao động quanh ngưỡng
+  // không làm nhãn nhấp nháy.
+  const END_AFTER_NONVIOLENCE = 2;
+  const EXIT_MARGIN = 0.15;
+  // Video sự kiện gồm thêm 1s trước và 0.5s sau để thấy trọn hành động.
+  const PREROLL_MS = 1000;
+  const POSTROLL_MS = 500;
+  // Giữ đủ khung trước khi xác nhận (ứng viên bắt đầu ~1.5s trước) + preroll.
+  const IDLE_BUFFER_MS = 4000;
+  const MAX_EVENT_MS = 60000;
+  // Starlette nhận tối đa 1000 file mỗi request; video sự kiện ≤ 900 khung.
+  const MAX_EVENT_FRAMES = 900;
 
   let stream = null;
   let running = false;
@@ -82,18 +106,15 @@
   let sampleTimer = null;
   let predictTimer = null;
   let rafId = 0;
-  let frameBuf = [];
+  let frameBuf = [];      // {blob, t}: 16 khung gần nhất để dự đoán
+  let recentFrames = [];  // {blob, t}: bộ đệm để dựng video sự kiện
   let lastResult = null;
   let probabilityHistory = [];
-  let recorder = null;
-  let recordingChunks = [];
-  let nonViolenceStreak = 0;
-  let violenceStreak = 0;
-  // Cần 2 lần dự đoán liên tiếp vượt ngưỡng mới báo bạo lực, tránh nhiễu 1 cửa
-  // sổ lẻ nhưng vẫn báo trong ~1-1.5 giây (mỗi lần dự đoán ~0.6s trên CPU).
-  const START_AFTER_VIOLENCE = 2;
-  // Kết thúc event ngay ở cửa sổ kế tiếp không còn bạo lực; tránh trễ 5-10 giây.
-  const END_AFTER_NONVIOLENCE = 1;
+  let candidate = null;   // {start, hits, peak}: đang vượt ngưỡng, chưa xác nhận
+  let activeEvent = null; // {start, lastViolent, peak}: đang trong sự kiện
+  let exitStreak = 0;
+  let cameraStartMs = 0;
+  let cameraStartWall = 0;
   let testRecorder = null;
   let testChunks = [];
   let testCountdownId = null;
@@ -188,10 +209,93 @@
 
   async function sampleFrame() {
     if (!running || cam.readyState < 2) return;
+    const t = performance.now();
     const blob = await grabJpegBlob();
     if (!blob) return;
-    frameBuf.push(blob);
+    const frame = { blob, t };
+    frameBuf.push(frame);
     if (frameBuf.length > NEED_FRAMES) frameBuf.shift();
+    recentFrames.push(frame);
+    const keepFrom = activeEvent ? activeEvent.start - PREROLL_MS : t - IDLE_BUFFER_MS;
+    while (recentFrames.length && recentFrames[0].t < keepFrom) recentFrames.shift();
+  }
+
+  // Giây tính từ lúc bật camera, và giờ thực tương ứng.
+  const secOnCam = (t) => (t - cameraStartMs) / 1000;
+  function clockOf(t) {
+    const d = new Date(cameraStartWall + (t - cameraStartMs));
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${Math.floor(d.getMilliseconds() / 100)}`;
+  }
+
+  // Cập nhật trạng thái sự kiện từ 1 dự đoán của cửa sổ [winStart, winEnd].
+  function updateEvent(p, thr, winStart, winEnd) {
+    if (!activeEvent) {
+      if (p >= thr) {
+        candidate = candidate
+          ? { ...candidate, hits: candidate.hits + 1, peak: Math.max(candidate.peak, p) }
+          : { start: winStart, hits: 1, peak: p };
+        if (candidate.hits >= START_AFTER_VIOLENCE) {
+          activeEvent = { start: candidate.start, lastViolent: winEnd, peak: candidate.peak };
+          candidate = null;
+          exitStreak = 0;
+        }
+      } else {
+        candidate = null;
+      }
+      return;
+    }
+    if (p >= thr - EXIT_MARGIN) {
+      activeEvent.lastViolent = winEnd;
+      activeEvent.peak = Math.max(activeEvent.peak, p);
+      exitStreak = 0;
+    } else {
+      exitStreak += 1;
+    }
+    if (exitStreak >= END_AFTER_NONVIOLENCE || winEnd - activeEvent.start > MAX_EVENT_MS) finishEvent();
+  }
+
+  function finishEvent() {
+    const ev = activeEvent;
+    activeEvent = null;
+    exitStreak = 0;
+    if (!ev) return;
+    const startS = secOnCam(ev.start);
+    const endS = secOnCam(ev.lastViolent);
+    const summary = `Bạo lực từ giây ${startS.toFixed(1)} → ${endS.toFixed(1)} `
+      + `(${clockOf(ev.start)} → ${clockOf(ev.lastViolent)}, ${(endS - startS).toFixed(1)}s)`;
+    eventInfo.hidden = false;
+    eventInfo.className = "result violence";
+    eventInfo.textContent = `${summary} · đang lưu video...`;
+
+    let clip = recentFrames.filter((f) => f.t >= ev.start - PREROLL_MS && f.t <= ev.lastViolent + POSTROLL_MS);
+    if (clip.length < 2) { eventInfo.textContent = summary; return; }
+    const spanS = (clip[clip.length - 1].t - clip[0].t) / 1000;
+    const step = Math.ceil(clip.length / MAX_EVENT_FRAMES);
+    clip = clip.filter((_, i) => i % step === 0);
+    const fps = spanS > 0 ? (clip.length - 1) / spanS : 15;
+
+    const fd = new FormData();
+    clip.forEach((f, i) => fd.append("frames", f.blob, `e${i}.jpg`));
+    fd.append("fps", fps.toFixed(2));
+    fd.append("start_s", startS.toFixed(2));
+    fd.append("end_s", endS.toFixed(2));
+    fd.append("start_clock", clockOf(ev.start));
+    fd.append("end_clock", clockOf(ev.lastViolent));
+    fd.append("peak_prob", ev.peak.toFixed(4));
+    fetch("/events/webcam", { method: "POST", body: fd })
+      .then(async (r) => {
+        const j = await r.json();
+        if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : "Không lưu được video sự kiện");
+        eventInfo.innerHTML = "";
+        eventInfo.append(`${summary} · đã lưu vào lịch sử `);
+        if (j.video_url) {
+          const a = document.createElement("a");
+          a.href = j.video_url; a.target = "_blank"; a.textContent = "(xem video)";
+          eventInfo.append(a);
+        }
+      })
+      .catch((e) => { eventInfo.textContent = `${summary} · lỗi lưu: ${e.message}`; });
   }
 
   // Lấy mẫu bám theo khung hình thật của camera (requestVideoFrameCallback) khi
@@ -222,7 +326,9 @@
     status.className = "result muted";
     const fd = new FormData();
     const take = frameBuf.slice(-NEED_FRAMES);
-    take.forEach((b, i) => fd.append("frames", b, `f${i}.jpg`));
+    const winStart = take[0].t;
+    const winEnd = take[take.length - 1].t;
+    take.forEach((f, i) => fd.append("frames", f.blob, `f${i}.jpg`));
     fd.append("save_history", "0");
     try {
       const r = await fetch("/predict/live", { method: "POST", body: fd });
@@ -235,10 +341,9 @@
         .filter((h) => nowMs - h.t <= SMOOTH_WINDOW_MS)
         .slice(-PROB_HISTORY_SIZE);
       const meanProbability = probabilityHistory.reduce((a, h) => a + h.p, 0) / probabilityHistory.length;
-      const candidateViolence = meanProbability >= Number(j.threshold ?? 0.6);
-      violenceStreak = candidateViolence ? violenceStreak + 1 : 0;
-      // Cần 3 cửa sổ liên tiếp vượt ngưỡng để xác nhận, tránh nhầm chuyển động nhẹ.
-      const bad = violenceStreak >= START_AFTER_VIOLENCE;
+      if (!running) return;
+      updateEvent(meanProbability, Number(j.threshold ?? 0.6), winStart, winEnd);
+      const bad = !!activeEvent;
       // Ghi đè luôn violence_pct/non_violence_pct bằng giá trị đã làm mượt —
       // trước đây chỉ vPct hiển thị được làm mượt còn nPct và canvas overlay
       // (đọc từ lastResult.violence_pct) vẫn dùng số thô của 1 lần dự đoán,
@@ -252,17 +357,13 @@
         violence_pct: smoothedVPct,
         non_violence_pct: smoothedNPct,
       };
-      if (bad) {
-        nonViolenceStreak = 0;
-        if (!recorder || recorder.state === "inactive") startEventRecording();
-      } else if (recorder && recorder.state === "recording") {
-        nonViolenceStreak += 1;
-        if (nonViolenceStreak >= END_AFTER_NONVIOLENCE) stopEventRecording();
-      }
       const vPct = smoothedVPct.toFixed(1);
       const nPct = smoothedNPct.toFixed(1);
       const predLabel = bad ? t("overlay_violence") : t("overlay_nonviolence");
-      status.innerHTML = `<span class="${bad ? "violence" : "ok"}">${predLabel}</span>`;
+      const since = bad
+        ? ` · từ giây ${secOnCam(activeEvent.start).toFixed(1)} (${clockOf(activeEvent.start)}), đã ${((winEnd - activeEvent.start) / 1000).toFixed(1)}s`
+        : "";
+      status.innerHTML = `<span class="${bad ? "violence" : "ok"}">${predLabel}</span>${since}`;
       status.className = "result";
       const latency = j.latency_ms != null ? ` · <span class="muted">${j.latency_ms} ms</span>` : "";
       hud.innerHTML = `<span class="violence">${t("overlay_violence")} ${vPct}%</span> · <span class="ok">${t("overlay_nonviolence")} ${nPct}%</span>${latency}`;
@@ -275,39 +376,6 @@
     } finally {
       busy = false;
     }
-  }
-
-  function startEventRecording() {
-    if (!stream || recorder) return;
-    const type = MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
-      ? "video/webm;codecs=vp8" : "video/webm";
-    recordingChunks = [];
-    recorder = new MediaRecorder(stream, { mimeType: type });
-    recorder.ondataavailable = (e) => { if (e.data.size) recordingChunks.push(e.data); };
-    recorder.onstop = async () => {
-      const blob = new Blob(recordingChunks, { type: "video/webm" });
-      recorder = null; recordingChunks = [];
-      if (blob.size < 1000) return;
-      status.textContent = "Đã kết thúc bạo lực · đang lưu video vào lịch sử...";
-      const fd = new FormData();
-      fd.append("file", blob, "webcam_event.webm");
-      fd.append("source", "webcam");
-      try {
-        const r = await fetch("/predict", { method: "POST", body: fd });
-        if (!r.ok) throw new Error("Không lưu được video sự kiện");
-        status.textContent = "Đã lưu video bạo lực vào lịch sử";
-      } catch (e) {
-        status.textContent = "Lỗi lưu lịch sử: " + e.message;
-        status.className = "result violence";
-      }
-    };
-    recorder.start();
-    status.textContent = "Đang ghi lại sự kiện bạo lực...";
-  }
-
-  function stopEventRecording() {
-    nonViolenceStreak = 0;
-    if (recorder && recorder.state === "recording") recorder.stop();
   }
 
   // "Quay thử 10s": ghi đúng 10 giây từ webcam bất kể có phát hiện bạo lực hay
@@ -507,8 +575,14 @@
     record10Btn.disabled = false;
     running = true;
     frameBuf = [];
+    recentFrames = [];
     lastResult = null;
     probabilityHistory = [];
+    candidate = null;
+    activeEvent = null;
+    exitStreak = 0;
+    cameraStartMs = performance.now();
+    cameraStartWall = Date.now();
     status.textContent = t("camera_running");
     status.className = "result muted";
     hud.textContent = t("hud_default");
@@ -532,9 +606,10 @@
     if (rafId) cancelAnimationFrame(rafId);
     rafId = 0;
     stopTestRecordingIfActive();
+    // Tắt camera giữa sự kiện: kết thúc ở cửa sổ bạo lực cuối cùng và lưu lại.
+    if (activeEvent) finishEvent();
+    candidate = null;
     if (stream) stream.getTracks().forEach((t) => t.stop());
-    if (recorder && recorder.state === "recording") recorder.stop();
-    recorder = null;
     stream = null;
     cam.srcObject = null;
     ctx.clearRect(0, 0, overlay.width, overlay.height);
@@ -546,6 +621,7 @@
     testResult.hidden = true;
     testResultActions.hidden = true;
     frameBuf = [];
+    recentFrames = [];
     lastResult = null;
     status.textContent = t("camera_stopped");
     status.className = "result muted";
