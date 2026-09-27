@@ -90,7 +90,29 @@ lấy frame theo thời gian. Kết quả hai luồng chưa thể so trực ti�
 ở giai đoạn khởi động. Khung HOG trên giao diện là khung người hoặc khung mặc định,
 không xác định riêng người nào đang bạo lực.
 
-## 4. Cấu trúc đang sử dụng
+## 4. Fine-tune cho webcam
+
+Model gốc (`best2.pt`) học trên RWF-2000 (camera an ninh). Để webcam dự đoán đúng,
+fine-tune thêm bằng clip quay từ chính webcam:
+
+1. **Thu thập:** mở trang Camera, bật camera, dùng khung "Thu thập dữ liệu webcam".
+   Mỗi lần bấm quay clip 4 giây (đếm ngược 3 giây), lưu vào
+   `data/webcam_dataset/violence/` hoặc `data/webcam_dataset/non_violence/`.
+   Nên có 100–200 clip mỗi lớp; lớp không bạo lực cần nhiều cử động mạnh
+   (ôm, nhảy, tập thể dục, vẫy tay, đi lại) và cả cảnh phòng trống.
+2. **Chia tập:** tự động theo tên file (~70% train, 10% val, 20% test), xem
+   `src/data/webcam_dataset.py`. Không cần tạo manifest.
+3. **Đánh giá trước fine-tune:**
+   `python -m src.eval_webcam --checkpoint checkpoints/best2.pt --threshold 0.75`
+4. **Fine-tune** trên Kaggle/Colab (GPU): upload `data/webcam_dataset` và `best2.pt`,
+   sửa `WEBCAM_ROOT`, `INIT_CHECKPOINT` (tùy chọn `RWF_ROOT`) trong
+   `notebooks/finetune_webcam.py` rồi chạy. Chép `best_webcam.pt` về `checkpoints/`.
+5. **Đánh giá sau fine-tune:**
+   `python -m src.eval_webcam --checkpoint checkpoints/best2.pt checkpoints/best_webcam.pt`
+6. Restart web. Trang Camera tự dùng `checkpoints/best_webcam.pt` nếu có, với ngưỡng
+   đã chọn trên tập val; trang Upload vẫn dùng `best2.pt`.
+
+## 5. Cấu trúc đang sử dụng
 
 ```text
 notebooks/kaggle_train_cnn_lstm.ipynb   Train và đánh giá trên Kaggle
@@ -100,6 +122,9 @@ src/history.py                       SQLite và lưu ảnh/video lịch sử
 src/models/cnn_lstm.py                ResNet18/50 + BiLSTM + Attention
 src/data/preprocess.py               Chia cửa sổ video cho suy luận
 src/data/transforms.py               Resize/crop và chuẩn hóa frame
+src/data/webcam_dataset.py           Đọc và chia tập dữ liệu webcam
+src/eval_webcam.py                   Đánh giá checkpoint trên clip webcam
+notebooks/finetune_webcam.py         Fine-tune best2.pt bằng dữ liệu webcam
 src/utils/config.py                  Đọc cấu hình và đường dẫn project
 src/utils/viz.py                     Vẽ attention cho video upload
 src/smoke_test.py                     Kiểm tra forward model không cần dataset

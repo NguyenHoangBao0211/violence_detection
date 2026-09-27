@@ -15,6 +15,7 @@ data/raw/**
 data/processed/**
 data/clips/**
 data/features/**
+data/webcam_dataset/**
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/splits/.gitkeep

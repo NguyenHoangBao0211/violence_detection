@@ -22,6 +22,16 @@
   <div id="testResult" class="result muted" hidden></div>
   <div id="testResultActions" class="result-actions" hidden></div>
 </section>
+<section class="card grid-actions upload-card">
+  <div class="section-heading"><div><h2>Thu thập dữ liệu webcam</h2><p>Quay clip 4 giây có gán nhãn để fine-tune model. Sau khi bấm có 3 giây đếm ngược để vào vị trí.</p></div></div>
+  <div class="btn-row">
+    <button id="recViolenceBtn" type="button" disabled>Quay clip Bạo lực</button>
+    <button id="recNonViolenceBtn" class="secondary" type="button" disabled>Quay clip Không bạo lực</button>
+    <button id="undoClipBtn" class="secondary" type="button" disabled>Xóa clip vừa quay</button>
+  </div>
+  <div id="datasetStatus" class="result muted">Bật camera để bắt đầu quay dữ liệu.</div>
+  <div id="datasetStats" class="hud muted">Đã có: — clip bạo lực · — clip không bạo lực</div>
+</section>
 {% endblock %}
 {% block scripts %}
 <script>
@@ -371,6 +381,113 @@
 
   record10Btn.addEventListener("click", startTestRecording);
 
+  // ===== Thu thập dữ liệu webcam có nhãn để fine-tune =====
+  const recViolenceBtn = document.getElementById("recViolenceBtn");
+  const recNonViolenceBtn = document.getElementById("recNonViolenceBtn");
+  const undoClipBtn = document.getElementById("undoClipBtn");
+  const datasetStatus = document.getElementById("datasetStatus");
+  const datasetStats = document.getElementById("datasetStats");
+  const DATASET_CLIP_MS = 4000;
+  const DATASET_COUNTDOWN_S = 3;
+  const LABEL_TEXT = { violence: "Bạo lực", non_violence: "Không bạo lực" };
+  let datasetBusy = false;
+  let lastClip = null;
+
+  function showDatasetCounts(counts) {
+    if (!counts) return;
+    datasetStats.textContent = `Đã có: ${counts.violence} clip bạo lực · ${counts.non_violence} clip không bạo lực`;
+  }
+
+  function setDatasetButtons() {
+    const enabled = running && !datasetBusy;
+    recViolenceBtn.disabled = !enabled;
+    recNonViolenceBtn.disabled = !enabled;
+    undoClipBtn.disabled = !enabled || !lastClip;
+  }
+
+  async function refreshDatasetStats() {
+    try {
+      const r = await fetch("/dataset/stats");
+      if (r.ok) showDatasetCounts((await r.json()).counts);
+    } catch (e) { /* stats are informational only */ }
+  }
+
+  function recordDatasetClip(label) {
+    if (!stream || datasetBusy) return;
+    datasetBusy = true;
+    setDatasetButtons();
+    let left = DATASET_COUNTDOWN_S;
+    datasetStatus.className = "result muted";
+    datasetStatus.textContent = `[${LABEL_TEXT[label]}] Chuẩn bị: ${left}...`;
+    const countdown = setInterval(() => {
+      left -= 1;
+      if (left > 0) {
+        datasetStatus.textContent = `[${LABEL_TEXT[label]}] Chuẩn bị: ${left}...`;
+        return;
+      }
+      clearInterval(countdown);
+      startDatasetRecording(label);
+    }, 1000);
+  }
+
+  function startDatasetRecording(label) {
+    if (!stream) { datasetBusy = false; setDatasetButtons(); return; }
+    const type = MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
+      ? "video/webm;codecs=vp8" : "video/webm";
+    const chunks = [];
+    const rec = new MediaRecorder(stream, { mimeType: type });
+    let startedAt = 0;
+    rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    rec.onstart = () => { startedAt = performance.now(); };
+    rec.onstop = async () => {
+      const durationMs = performance.now() - startedAt;
+      const blob = new Blob(chunks, { type: "video/webm" });
+      datasetStatus.textContent = `[${LABEL_TEXT[label]}] Đang lưu clip...`;
+      const fd = new FormData();
+      fd.append("file", blob, "clip.webm");
+      fd.append("label", label);
+      fd.append("duration_ms", String(Math.round(durationMs)));
+      try {
+        const r = await fetch("/dataset/clip", { method: "POST", body: fd });
+        const j = await r.json();
+        if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : "Không lưu được clip");
+        lastClip = { label: j.label, name: j.name };
+        datasetStatus.className = "result";
+        datasetStatus.textContent = `Đã lưu clip ${LABEL_TEXT[label]}: ${j.name}`;
+        showDatasetCounts(j.counts);
+      } catch (e) {
+        datasetStatus.className = "result violence";
+        datasetStatus.textContent = t("error_label") + e.message;
+      } finally {
+        datasetBusy = false;
+        setDatasetButtons();
+      }
+    };
+    rec.start();
+    datasetStatus.textContent = `[${LABEL_TEXT[label]}] ĐANG QUAY 4 giây...`;
+    setTimeout(() => { if (rec.state === "recording") rec.stop(); }, DATASET_CLIP_MS);
+  }
+
+  recViolenceBtn.addEventListener("click", () => recordDatasetClip("violence"));
+  recNonViolenceBtn.addEventListener("click", () => recordDatasetClip("non_violence"));
+  undoClipBtn.addEventListener("click", async () => {
+    if (!lastClip) return;
+    try {
+      const r = await fetch(`/dataset/clip/${lastClip.label}/${encodeURIComponent(lastClip.name)}`, { method: "DELETE" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : "Không xóa được clip");
+      datasetStatus.className = "result muted";
+      datasetStatus.textContent = `Đã xóa clip ${lastClip.name}`;
+      lastClip = null;
+      showDatasetCounts(j.counts);
+    } catch (e) {
+      datasetStatus.className = "result violence";
+      datasetStatus.textContent = t("error_label") + e.message;
+    }
+    setDatasetButtons();
+  });
+  refreshDatasetStats();
+
   startBtn.addEventListener("click", async () => {
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -397,6 +514,9 @@
     hud.textContent = t("hud_default");
     hud.className = "hud muted";
     alertBox.classList.remove("show");
+    setDatasetButtons();
+    datasetStatus.className = "result muted";
+    datasetStatus.textContent = "Chọn nhãn để quay clip.";
     drawOverlay();
     startSampling();
     predictTimer = setInterval(predictOnce, PREDICT_EVERY_MS);
@@ -422,6 +542,7 @@
     startBtn.disabled = false;
     stopBtn.disabled = true;
     record10Btn.disabled = true;
+    setDatasetButtons();
     testResult.hidden = true;
     testResultActions.hidden = true;
     frameBuf = [];

@@ -29,7 +29,10 @@ templates = Jinja2Templates(directory=str(web_dir / "templates"))
 
 cfg = load_config(root / "configs/default.yaml")
 ckpt = root / "checkpoints" / "best2.pt"
-webcam_ckpt = root / "checkpoints" / "best2.pt"
+# Webcam prefers the model fine-tuned on webcam clips (notebooks/finetune_webcam.py).
+webcam_ckpt = root / "checkpoints" / "best_webcam.pt"
+if not webcam_ckpt.exists():
+    webcam_ckpt = root / "checkpoints" / "best2.pt"
 if not ckpt.exists():
     ckpt = root / "checkpoints" / "MoBiLSTM_model.h5"
 if not ckpt.exists():
@@ -64,7 +67,9 @@ if webcam_ckpt.exists():
         # raise the bar for a live "violence" call. This is a stopgap, not a
         # real fix — the model itself needs more non-violent-but-moving
         # webcam footage to stop conflating motion with violence.
-        _webcam_cfg["infer"]["threshold"] = 0.75
+        # A webcam fine-tuned checkpoint carries its own validated threshold.
+        if webcam_ckpt.name == "best2.pt":
+            _webcam_cfg["infer"]["threshold"] = 0.75
     except Exception as exc:  # noqa: BLE001
         _webcam_model_error = str(exc)
 else:
@@ -304,6 +309,81 @@ async def predict_live(
         snap_url = _rel_media(snap)
 
     return _prediction_payload(result, history_id=hist_id, extra={"snapshot_url": snap_url})
+
+
+DATASET_DIR = root / "data" / "webcam_dataset"
+DATASET_LABELS = ("violence", "non_violence")
+
+
+def _save_dataset_clip(src: Path, label: str, duration_ms: float) -> Path:
+    """Re-encode a browser WebM clip to MP4 with a real frame count and fps.
+
+    MediaRecorder WebM files often report no frame count, which breaks the
+    training loader (it seeks by frame index), so decode and write again.
+    """
+    frames = []
+    cap = cv2.VideoCapture(str(src))
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        frames.append(frame)
+    cap.release()
+    if len(frames) < 16:
+        raise HTTPException(400, f"Clip quá ngắn ({len(frames)} khung), cần ≥16 khung")
+    fps = len(frames) / (duration_ms / 1000.0) if duration_ms > 0 else 30.0
+    fps = float(min(60.0, max(10.0, round(fps))))
+    h, w = frames[0].shape[:2]
+    scale = min(1.0, 640.0 / max(h, w))
+    size = (int(w * scale) // 2 * 2, int(h * scale) // 2 * 2)
+    out_dir = DATASET_DIR / label
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / f"{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}.mp4"
+    writer = cv2.VideoWriter(str(dest), cv2.VideoWriter_fourcc(*"mp4v"), fps, size)
+    try:
+        for frame in frames:
+            writer.write(cv2.resize(frame, size) if scale < 1.0 else frame[: size[1], : size[0]])
+    finally:
+        writer.release()
+    return dest
+
+
+def _dataset_stats() -> dict:
+    return {label: len(list((DATASET_DIR / label).glob("*.mp4"))) for label in DATASET_LABELS}
+
+
+@app.get("/dataset/stats")
+def dataset_stats() -> dict:
+    return {"counts": _dataset_stats(), "dir": str(DATASET_DIR)}
+
+
+@app.post("/dataset/clip")
+async def dataset_add_clip(
+    file: UploadFile = File(...),
+    label: str = Form(...),
+    duration_ms: float = Form(0),
+) -> dict:
+    """Save a labelled webcam clip for fine-tuning."""
+    if label not in DATASET_LABELS:
+        raise HTTPException(400, f"Nhãn không hợp lệ: {label}")
+    tmp = Path(tempfile.gettempdir()) / f"ds-{uuid.uuid4().hex}.webm"
+    try:
+        tmp.write_bytes(await file.read())
+        dest = await run_in_threadpool(_save_dataset_clip, tmp, label, duration_ms)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return {"ok": True, "label": label, "name": dest.name, "counts": _dataset_stats()}
+
+
+@app.delete("/dataset/clip/{label}/{name}")
+def dataset_delete_clip(label: str, name: str) -> dict:
+    path = DATASET_DIR / label / name
+    if label not in DATASET_LABELS or path.parent != DATASET_DIR / label or path.suffix != ".mp4":
+        raise HTTPException(400, "Clip không hợp lệ")
+    if not path.exists():
+        raise HTTPException(404, "Không tìm thấy clip")
+    path.unlink()
+    return {"ok": True, "counts": _dataset_stats()}
 
 
 @app.post("/predict")
