@@ -105,7 +105,7 @@ fine-tune thêm bằng clip quay từ chính webcam:
 3. **Đánh giá trước fine-tune:**
    `python -m src.eval_webcam --checkpoint checkpoints/best2.pt --threshold 0.75`
 4. **Fine-tune** trên Kaggle/Colab (GPU): upload `data/webcam_dataset` và `best2.pt`,
-   sửa `WEBCAM_ROOT`, `INIT_CHECKPOINT` (tùy chọn `RWF_ROOT`) trong
+   sửa `WEBCAM_ROOT`, `INIT_CHECKPOINT` và `EXTRA_DATASETS` (RWF-2000, RLVS, AIRTLab — các bộ `best2.pt` đã học, để model không quên) trong
    `notebooks/finetune_webcam.py` rồi chạy. Chép `best_webcam.pt` về `checkpoints/`.
 5. **Đánh giá sau fine-tune:**
    `python -m src.eval_webcam --checkpoint checkpoints/best2.pt checkpoints/best_webcam.pt`

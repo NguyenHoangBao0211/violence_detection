@@ -6,7 +6,7 @@ train_resnet50_bilstm_attention_clean.py, so the web app loads the result.
 
 Kaggle / Colab (GPU):
   1. Upload data/webcam_dataset (violence/, non_violence/) and best2.pt as datasets.
-  2. Set WEBCAM_ROOT, INIT_CHECKPOINT (and RWF_ROOT to mix in RWF-2000).
+  2. Set WEBCAM_ROOT, INIT_CHECKPOINT and EXTRA_DATASETS (RWF-2000, RLVS, AIRTLab).
   3. Run. Copy OUT_DIR/best_webcam.pt to checkpoints/best_webcam.pt.
 Local: python notebooks/finetune_webcam.py  (works on CPU, only slower).
 """
@@ -31,10 +31,21 @@ from torchvision.models import resnet50
 ROOT = Path(__file__).resolve().parents[1] if "__file__" in globals() else Path.cwd()
 WEBCAM_ROOT = ROOT / "data" / "webcam_dataset"          # Kaggle: /kaggle/input/<your-dataset>
 INIT_CHECKPOINT = ROOT / "checkpoints" / "best2.pt"      # Kaggle: /kaggle/input/<ckpt>/best2.pt
-# Optional: mix RWF-2000 train clips so the model does not forget CCTV scenes.
-# Expected layout: <RWF_ROOT>/train/Fight, <RWF_ROOT>/train/NonFight. None = off.
-RWF_ROOT = None                                          # e.g. Path("/kaggle/input/rwf-2000/RWF-2000")
-RWF_PER_EPOCH = 1.0   # RWF clips drawn each epoch, as a multiple of webcam train clips
+# Mix in the datasets best2.pt was trained on so it does not forget them.
+# Each entry: (folder, {subfolder: label}); videos are found recursively, so
+# AIRTLab's cam1/cam2 subfolders work. Copy the exact paths from the Kaggle
+# sidebar (Input -> right-click folder -> Copy path). Empty list = off.
+EXTRA_DATASETS = [
+    # RWF-2000 (train split only; its val split is not used here)
+    # ("/kaggle/input/rwf2000/RWF-2000/train", {"Fight": 1, "NonFight": 0}),
+    # Real Life Violence Situations
+    # ("/kaggle/input/real-life-violence-situations-dataset/Real Life Violence Dataset",
+    #  {"Violence": 1, "NonViolence": 0}),
+    # AIRTLab ("DataWebCam"): violent/cam1, violent/cam2, non-violent/cam1, non-violent/cam2
+    # ("/kaggle/input/datawebcam/A-Dataset-for-Automatic-Violence-Detection-in-Videos-master/violence-detection-dataset",
+    #  {"violent": 1, "non-violent": 0}),
+]
+EXTRA_PER_EPOCH = 1.0  # extra clips drawn each epoch, as a multiple of webcam train clips
 OUT_DIR = ROOT / "checkpoints" if not Path("/kaggle/working").exists() else Path("/kaggle/working")
 
 SEED, T, SIZE = 42, 16, 224
@@ -67,13 +78,16 @@ def webcam_clips(split):
     return out
 
 
-def rwf_clips():
-    if RWF_ROOT is None:
-        return []
+def extra_clips():
     out = []
-    for name, label in (("NonFight", 0), ("Fight", 1)):
-        out += [(str(p), label) for p in sorted((Path(RWF_ROOT) / "train" / name).rglob("*"))
-                if p.suffix.lower() in EXTS]
+    for root, folders in EXTRA_DATASETS:
+        for name, label in folders.items():
+            folder = Path(root) / name
+            if not folder.is_dir():
+                raise FileNotFoundError(f"Không thấy thư mục {folder} — kiểm tra EXTRA_DATASETS")
+            found = [(str(p), label) for p in sorted(folder.rglob("*")) if p.suffix.lower() in EXTS]
+            print(f"  extra {folder}: {len(found)} clip, label={label}")
+            out += found
     return out
 
 
@@ -216,8 +230,8 @@ def main():
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
     train_w, val, test = webcam_clips("train"), webcam_clips("val"), webcam_clips("test")
-    rwf = rwf_clips()
-    print(f"Device {DEVICE} | webcam train/val/test: {len(train_w)}/{len(val)}/{len(test)} | RWF pool: {len(rwf)}")
+    extra = extra_clips()
+    print(f"Device {DEVICE} | webcam train/val/test: {len(train_w)}/{len(val)}/{len(test)} | extra pool: {len(extra)}")
     for name, items in (("train", train_w), ("val", val), ("test", test)):
         ys = [y for _, y in items]
         print(f"  {name}: violence={sum(ys)} non_violence={len(ys) - sum(ys)}")
@@ -239,7 +253,7 @@ def main():
 
     best_f1, best_state, best_thr, stale = -1.0, None, 0.6, 0
     for epoch in range(1, EPOCHS + 1):
-        items = train_w + random.sample(rwf, min(len(rwf), int(len(train_w) * RWF_PER_EPOCH)))
+        items = train_w + random.sample(extra, min(len(extra), int(len(train_w) * EXTRA_PER_EPOCH)))
         loader = DataLoader(TrainDataset(items), batch_size=BATCH, shuffle=True, num_workers=2 if DEVICE.type == "cuda" else 0)
         set_train_mode(model); losses = []
         for x, y in loader:
