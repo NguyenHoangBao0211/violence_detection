@@ -22,8 +22,8 @@ from src.infer import load_detector, run_inference_frames
 from src.utils.config import load_config, project_root
 
 
-def read_frames(path, max_side: int = 384, jpeg_quality: int = 70) -> list[np.ndarray]:
-    """Frames as the Camera page sends them: <=384px and JPEG quality 0.7.
+def read_frames(path, max_side: int = 640, jpeg_quality: int = 90) -> list[np.ndarray]:
+    """Frames as the Camera page sends them: <=640px and JPEG quality 0.9.
     The JPEG step matters: the model is sensitive to JPEG artefacts."""
     cap = cv2.VideoCapture(str(path))
     frames = []
@@ -74,7 +74,7 @@ def main() -> None:
     parser.add_argument("--split", default="test", choices=["train", "val", "test", "all"])
     parser.add_argument("--threshold", type=float, default=None, help="default: the checkpoint's threshold")
     parser.add_argument("--no-crop", action="store_true", help="classify full frames instead of YOLO crops")
-    parser.add_argument("--jpeg", type=int, default=70, help="JPEG quality like the Camera page; 0 = off")
+    parser.add_argument("--jpeg", type=int, default=90, help="JPEG quality like the Camera page; 0 = off")
     parser.add_argument("--out", default="reports/outputs/eval_webcam.json")
     args = parser.parse_args()
 

@@ -69,7 +69,11 @@
   // (video hiển thị vẫn giữ nguyên độ phân giải gốc). Trước đây mỗi lần lấy mẫu
   // vẽ + nén JPEG cả khung 1280x720 ~5-6 lần/giây khiến luồng camera bị giật/đơ;
   // thu nhỏ trước khi nén giảm ~10 lần khối lượng tính toán trên main thread.
-  const MAX_SEND_SIDE = 384;
+  // Không thu nhỏ quá mức: ở 384px + JPEG 0.7, người đứng xa (~150px ở 720p)
+  // chỉ còn ~48px, ảnh vỡ khối sau khi cắt/phóng to và model báo NHẦM bạo lực
+  // (clip không bạo lực: 0.91–1.00). Ở 640px + JPEG 0.9 còn 0.00–0.09.
+  const MAX_SEND_SIDE = 640;
+  const SEND_JPEG_QUALITY = 0.9;
   // Làm mượt xác suất theo THỜI GIAN chứ không theo số lần dự đoán: chỉ lấy
   // trung bình các kết quả trong SMOOTH_WINDOW_MS gần nhất (tối đa
   // PROB_HISTORY_SIZE kết quả). Trước đây lấy 5 kết quả cuối — khi server trả
@@ -204,7 +208,7 @@
   function grabJpegBlob() {
     if (!ensureSendCanvasSize()) return null;
     sendCtx.drawImage(cam, 0, 0, sendCanvas.width, sendCanvas.height);
-    return new Promise((resolve) => sendCanvas.toBlob((b) => resolve(b), "image/jpeg", 0.7));
+    return new Promise((resolve) => sendCanvas.toBlob((b) => resolve(b), "image/jpeg", SEND_JPEG_QUALITY));
   }
 
   async function sampleFrame() {

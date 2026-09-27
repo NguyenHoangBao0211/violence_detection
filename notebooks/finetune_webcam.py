@@ -91,11 +91,11 @@ def extra_clips():
     return out
 
 
-# The Camera page sends every frame as JPEG quality 0.7. The model turned out to
+# The Camera page sends every frame at <=640px as JPEG quality 0.9. The model turned out to
 # be very sensitive to JPEG artefacts (a static empty room went from 0.05 to
 # 0.96 "violence" after JPEG encoding), so train with random JPEG quality and
 # validate at the live quality.
-LIVE_JPEG_QUALITY = 70
+LIVE_JPEG_QUALITY = 90
 TRAIN_JPEG_QUALITY = (50, 95)
 TRAIN_JPEG_PROB = 0.8
 
@@ -104,7 +104,7 @@ def jpeg_roundtrip(bgr, quality):
     return cv2.imdecode(cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, int(quality)])[1], cv2.IMREAD_COLOR)
 
 
-def read_frames(path, max_side=384, jpeg_quality=None):
+def read_frames(path, max_side=640, jpeg_quality=None):
     """All frames (RGB), downscaled and optionally JPEG-encoded like the webcam page sends them."""
     cap = cv2.VideoCapture(str(path)); frames = []
     while True:

@@ -262,9 +262,9 @@ def run_inference_frames(
     clip = _sample_clip(frames, window)
     last = frames[-1]
     with _infer_lock:
-        # Webcam frames arrive downscaled (<=384px), so YOLO at 640 only
-        # upsamples them and wastes time.
-        boxes = detect_persons(last, imgsz=384) if with_boxes else []
+        # Webcam frames arrive at <=640px; YOLO at the same size keeps small,
+        # distant people detectable.
+        boxes = detect_persons(last, imgsz=640) if with_boxes else []
         # Realtime runs the classifier once: on the YOLO person union crop when
         # available (more pixels on the people, less background), otherwise on
         # the full frame.
@@ -312,9 +312,7 @@ def run_inference(model, cfg: dict, device: torch.device, video_path: str | Path
             full_prob = torch.softmax(logits, dim=1)[0, 1].item()
             prob = full_prob
 
-            # Upload ensemble: combine the original scene with a YOLO person crop.
-            # The full-frame branch keeps compatibility with the training data;
-            # the crop branch gives distant people more useful pixels.
+            # Kết hợp toàn cảnh với vùng người do YOLO phát hiện.
             boxes = detect_persons(clip_np[-1])
             if boxes:
                 cropped = crop_person_clip(clip_np, boxes)
