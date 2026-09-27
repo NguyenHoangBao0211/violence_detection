@@ -18,6 +18,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
 from src.history import add_detection, delete_all_detections, delete_detection, get_detection, init_db, list_detections, save_video_copy
+from src import movinet_veto
 from src.infer import load_detector, run_inference, run_inference_frames
 from src.utils.config import load_config, project_root
 
@@ -74,6 +75,8 @@ if webcam_ckpt.exists():
         _webcam_model_error = str(exc)
 else:
     _webcam_model_error = f"Missing checkpoint: {webcam_ckpt}"
+# Load the webcam second-opinion model now rather than on the first request.
+movinet_veto.get_model()
 
 init_db()
 storage = root / "storage"
@@ -193,6 +196,9 @@ def health() -> dict:
         "device": str(_device) if _device is not None else None,
         "checkpoint": str(ckpt),
         "error": _model_error,
+        "webcam_checkpoint": str(webcam_ckpt),
+        "webcam_movinet_veto": movinet_veto.get_model() is not None,
+        "webcam_movinet_error": movinet_veto.error(),
         "db": str(root / "data" / "history.db"),
     }
 
@@ -227,6 +233,7 @@ def _prediction_payload(result: dict, *, history_id: int | None = None, extra: d
         "threshold": result.get("threshold", 0.5),
         "boxes": result.get("boxes") or [],
         "latency_ms": result.get("latency_ms"),
+        "movinet_prob": result.get("movinet_prob"),
         "history_id": history_id,
         "backend": _backend,
     }
@@ -338,7 +345,8 @@ async def predict_live(
 
     try:
         result = await run_in_threadpool(
-            partial(run_inference_frames, _webcam_model, _webcam_cfg, _webcam_device, rgb_frames, with_boxes=True)
+            partial(run_inference_frames, _webcam_model, _webcam_cfg, _webcam_device, rgb_frames,
+                    with_boxes=True, with_movinet=True)
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, str(exc)) from exc

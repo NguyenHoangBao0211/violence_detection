@@ -39,3 +39,6 @@ Ultralytics/
 # Production checkpoint used by the public Render deployment.
 !checkpoints/best2.pt
 !checkpoints/yolo11n.pt
+# MoViNet-A0 + VD-MIL head (CC BY-NC 4.0, roggerfq/violence-detection-mil)
+!checkpoints/movinet_a0_stream.pth
+!checkpoints/movinet_vdmil_head.pt

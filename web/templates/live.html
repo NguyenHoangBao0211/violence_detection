@@ -62,6 +62,18 @@
   // mất 1 khung mỗi 2 khung → 16 khung trải ~1.07s, chuyển động nhanh gấp đôi
   // so với clip train (16 khung liên tiếp ≈ 0.53s ở 30fps RWF-2000).
   const NEED_FRAMES = 16;
+  // Gửi ~1 giây (24 khung): ResNet50-BiLSTM dùng 16 khung cuối liên tiếp,
+  // MoViNet-A0 lấy 8 khung trải đều cả giây (cách nó được train, ~8fps).
+  const SEND_FRAMES = 24;
+  // ===== Model thứ 2: MoViNet phủ quyết báo nhầm =====
+  // best2.pt chấm nhầm cảnh người đứng yên trong phòng là bạo lực (trung bình
+  // 0.88 trên 398 cửa sổ thật), MoViNet chấm đúng các cảnh đó ~0.01 nhưng vẫn
+  // phản ứng với đánh nhau thật. Nếu MoViNet cao nhất trong MOVINET_MEMORY lần
+  // gần nhất < MOVINET_VETO thì xác suất bạo lực bị hạ về tối đa MOVINET_CAP.
+  // Trên dữ liệu thật: sự kiện báo nhầm 15 → 1, đánh nhau vẫn được phát hiện.
+  const MOVINET_VETO = 0.1;
+  const MOVINET_MEMORY = 3;
+  const MOVINET_CAP = 0.3;
   const SAMPLE_MS = 30;
   // Cập nhật nhanh hơn để bám sát thời điểm bắt đầu/kết thúc hành động.
   const PREDICT_EVERY_MS = 220;
@@ -114,6 +126,7 @@
   let recentFrames = [];  // {blob, t}: bộ đệm để dựng video sự kiện
   let lastResult = null;
   let probabilityHistory = [];
+  let movinetHistory = [];
   let candidate = null;   // {start, hits, peak}: đang vượt ngưỡng, chưa xác nhận
   let activeEvent = null; // {start, lastViolent, peak}: đang trong sự kiện
   let exitStreak = 0;
@@ -218,7 +231,7 @@
     if (!blob) return;
     const frame = { blob, t };
     frameBuf.push(frame);
-    if (frameBuf.length > NEED_FRAMES) frameBuf.shift();
+    if (frameBuf.length > SEND_FRAMES) frameBuf.shift();
     recentFrames.push(frame);
     const keepFrom = activeEvent ? activeEvent.start - PREROLL_MS : t - IDLE_BUFFER_MS;
     while (recentFrames.length && recentFrames[0].t < keepFrom) recentFrames.shift();
@@ -329,8 +342,9 @@
     status.textContent = t("detecting_realtime");
     status.className = "result muted";
     const fd = new FormData();
-    const take = frameBuf.slice(-NEED_FRAMES);
-    const winStart = take[0].t;
+    const take = frameBuf.slice(-SEND_FRAMES);
+    // Mốc sự kiện theo cửa sổ 16 khung mà ResNet50-BiLSTM phân tích.
+    const winStart = take[Math.max(0, take.length - NEED_FRAMES)].t;
     const winEnd = take[take.length - 1].t;
     take.forEach((f, i) => fd.append("frames", f.blob, `f${i}.jpg`));
     fd.append("save_history", "0");
@@ -338,7 +352,15 @@
       const r = await fetch("/predict/live", { method: "POST", body: fd });
       const j = await r.json();
       if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : t("detect_error_generic"));
-      const rawProbability = Number(j.violence_prob_mean || 0);
+      let rawProbability = Number(j.violence_prob_mean || 0);
+      let vetoed = false;
+      if (j.movinet_prob != null) {
+        movinetHistory = [...movinetHistory, Number(j.movinet_prob)].slice(-MOVINET_MEMORY);
+        if (Math.max(...movinetHistory) < MOVINET_VETO && rawProbability > MOVINET_CAP) {
+          rawProbability = MOVINET_CAP;
+          vetoed = true;
+        }
+      }
       const nowMs = performance.now();
       probabilityHistory.push({ p: rawProbability, t: nowMs });
       probabilityHistory = probabilityHistory
@@ -370,7 +392,10 @@
       status.innerHTML = `<span class="${bad ? "violence" : "ok"}">${predLabel}</span>${since}`;
       status.className = "result";
       const latency = j.latency_ms != null ? ` · <span class="muted">${j.latency_ms} ms</span>` : "";
-      hud.innerHTML = `<span class="violence">${t("overlay_violence")} ${vPct}%</span> · <span class="ok">${t("overlay_nonviolence")} ${nPct}%</span>${latency}`;
+      const mvText = j.movinet_prob != null
+        ? ` · <span class="muted">MoViNet ${(j.movinet_prob * 100).toFixed(0)}%${vetoed ? " (phủ quyết)" : ""}</span>`
+        : "";
+      hud.innerHTML = `<span class="violence">${t("overlay_violence")} ${vPct}%</span> · <span class="ok">${t("overlay_nonviolence")} ${nPct}%</span>${mvText}${latency}`;
       hud.className = "hud";
       if (bad) alertBox.classList.add("show");
       else alertBox.classList.remove("show");
@@ -582,6 +607,7 @@
     recentFrames = [];
     lastResult = null;
     probabilityHistory = [];
+    movinetHistory = [];
     candidate = null;
     activeEvent = null;
     exitStreak = 0;

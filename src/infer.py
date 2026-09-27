@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 import torch
 
+from src import movinet_veto
 from src.data.preprocess import sliding_windows
 from src.data.transforms import eval_transform
 from src.models.cnn_lstm import CNNLSTM, MobileNetBiLSTM, ResNet50BiLSTMAttention
@@ -253,15 +254,24 @@ def run_inference_frames(
     frames: list[np.ndarray],
     *,
     with_boxes: bool = True,
+    with_movinet: bool = False,
 ) -> dict:
-    """Classify a short RGB frame clip and optionally detect person boxes."""
+    """Classify a short RGB frame clip and optionally detect person boxes.
+
+    With more frames than the model window (the Camera page sends ~1 s), the
+    classifier sees the last `window` consecutive frames, as in training, and
+    MoViNet (with_movinet) scores the whole second as a second opinion.
+    """
     started = time.perf_counter()
     window = cfg["infer"].get("window_frames", cfg["data"]["num_frames"])
     threshold = cfg["infer"].get("threshold", 0.5)
     transform = eval_transform(cfg["data"]["image_size"], x3d=cfg.get("model_type") == "x3d_m")
-    clip = _sample_clip(frames, window)
+    clip = list(frames[-window:]) if len(frames) >= window else _sample_clip(frames, window)
     last = frames[-1]
+    movinet_prob = None
     with _infer_lock:
+        if with_movinet:
+            movinet_prob = movinet_veto.score(frames)
         # Webcam frames arrive at <=640px; YOLO at the same size keeps small,
         # distant people detectable.
         boxes = detect_persons(last, imgsz=640) if with_boxes else []
@@ -289,6 +299,7 @@ def run_inference_frames(
         "boxes": boxes,
         "frame_w": int(last.shape[1]),
         "frame_h": int(last.shape[0]),
+        "movinet_prob": movinet_prob,
         "latency_ms": round((time.perf_counter() - started) * 1000),
     }
 
