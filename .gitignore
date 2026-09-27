@@ -33,6 +33,8 @@ reports/outputs/**
 *.npz
 .DS_Store
 Thumbs.db
+Ultralytics/
 
 # Production checkpoint used by the public Render deployment.
 !checkpoints/best2.pt
+!checkpoints/yolo11n.pt

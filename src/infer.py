@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import cv2
@@ -13,6 +14,28 @@ from src.data.transforms import eval_transform
 from src.models.cnn_lstm import CNNLSTM, MobileNetBiLSTM, ResNet50BiLSTMAttention
 from src.utils.config import load_config, project_root
 from src.utils.viz import plot_attention
+
+os.environ.setdefault(
+    "YOLO_CONFIG_DIR",
+    str(project_root() / "storage" / "ultralytics"),
+)
+
+_yolo_person_model = None
+
+
+def _get_yolo_person_model():
+    """Load the lightweight person detector once, only when webcam boxes are requested."""
+    global _yolo_person_model
+    if _yolo_person_model is None:
+        weights = project_root() / "checkpoints" / "yolo11n.pt"
+        if not weights.exists():
+            return None
+        try:
+            from ultralytics import YOLO
+        except ImportError:
+            return None
+        _yolo_person_model = YOLO(str(weights))
+    return _yolo_person_model
 
 
 def load_all_frames(video_path: str | Path) -> list[np.ndarray]:
@@ -136,8 +159,29 @@ def _sample_clip(frames: list[np.ndarray], num_frames: int) -> list[np.ndarray]:
 
 
 def detect_persons(frame_rgb: np.ndarray) -> list[dict]:
-    """Detect people with OpenCV HOG; return normalized boxes (x,y,w,h in 0..1)."""
+    """Detect people with YOLO11n, with HOG as a local fallback."""
     h, w = frame_rgb.shape[:2]
+    yolo = _get_yolo_person_model()
+    if yolo is not None:
+        result = yolo.predict(
+            source=frame_rgb,
+            classes=[0],
+            conf=0.25,
+            imgsz=640,
+            verbose=False,
+            device=0 if torch.cuda.is_available() else "cpu",
+        )[0]
+        boxes = []
+        if result.boxes is not None:
+            for xyxy, conf in zip(result.boxes.xyxy.cpu().numpy(), result.boxes.conf.cpu().numpy()):
+                x1, y1, x2, y2 = xyxy.tolist()
+                boxes.append({
+                    "x": max(0.0, x1 / w), "y": max(0.0, y1 / h),
+                    "w": max(0.0, (x2 - x1) / w), "h": max(0.0, (y2 - y1) / h),
+                    "score": float(conf),
+                })
+        return boxes
+
     bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
     # Downscale for speed; map boxes back to original size.
     scale = 1.0
@@ -167,11 +211,30 @@ def detect_persons(frame_rgb: np.ndarray) -> list[dict]:
             }
         )
 
-    # If HOG misses (common indoor/webcam), fall back to a center subject box
-    # so the UI still shows label + % like a real monitor.
+    # If both detectors miss, keep the UI response valid without inventing a
+    # person crop; classification remains on the original frame.
     if not boxes:
-        boxes.append({"x": 0.18, "y": 0.10, "w": 0.64, "h": 0.80, "score": 0.0})
+        return []
     return boxes
+
+
+def crop_person_clip(frames: list[np.ndarray], boxes: list[dict]) -> list[np.ndarray]:
+    """Crop the union of detected people with a small context margin."""
+    if not boxes:
+        return frames
+    h, w = frames[0].shape[:2]
+    x1 = min(b["x"] for b in boxes)
+    y1 = min(b["y"] for b in boxes)
+    x2 = max(b["x"] + b["w"] for b in boxes)
+    y2 = max(b["y"] + b["h"] for b in boxes)
+    pad_x, pad_y = (x2 - x1) * 0.15, (y2 - y1) * 0.15
+    left = max(0, int((x1 - pad_x) * w))
+    top = max(0, int((y1 - pad_y) * h))
+    right = min(w, int((x2 + pad_x) * w))
+    bottom = min(h, int((y2 + pad_y) * h))
+    if right - left < 32 or bottom - top < 32:
+        return frames
+    return [frame[top:bottom, left:right] for frame in frames]
 
 
 @torch.no_grad()
@@ -198,13 +261,17 @@ def run_inference_frames(
 
     last = frames[-1]
     boxes = detect_persons(last) if with_boxes else []
-    # Classification always runs on the full frame, matching the frames the
-    # model was trained on (RWF-2000/AIRTLab clips are not person-cropped).
-    # Re-classifying on a HOG person crop was tried previously, but the crop
-    # is out-of-distribution for the model and its aspect ratio/tightness
-    # varies a lot with subject distance, which made predictions flip
-    # between a stationary subject standing close vs. far from the camera.
-    # `boxes` is still used to draw the overlay in the UI.
+    # For webcam mode, use the YOLO person union crop when available. This
+    # gives distant subjects more pixels and removes most background noise.
+    if with_boxes and boxes:
+        cropped = crop_person_clip(clip, boxes)
+        tensor = transform(cropped).unsqueeze(0).to(device)
+        logits, _attn = model(tensor)
+        probs = torch.softmax(logits, dim=1)[0]
+        violence_prob = float(probs[1].item())
+        non_prob = float(probs[0].item())
+        label = int(violence_prob >= threshold)
+        class_name = cfg["data"]["classes"][label]
     return {
         "n_frames": len(frames),
         "n_clips": 1,
@@ -235,7 +302,20 @@ def run_inference(model, cfg: dict, device: torch.device, video_path: str | Path
         clip_np = [frames[int(i)] for i in idxs]
         tensor = transform(clip_np).unsqueeze(0).to(device)
         logits, attn = model(tensor)
-        prob = torch.softmax(logits, dim=1)[0, 1].item()
+        full_prob = torch.softmax(logits, dim=1)[0, 1].item()
+        prob = full_prob
+
+        # Upload ensemble: combine the original scene with a YOLO person crop.
+        # The full-frame branch keeps compatibility with the training data;
+        # the crop branch gives distant people more useful pixels.
+        boxes = detect_persons(clip_np[-1])
+        if boxes:
+            cropped = crop_person_clip(clip_np, boxes)
+            crop_tensor = transform(cropped).unsqueeze(0).to(device)
+            crop_logits, _ = model(crop_tensor)
+            crop_prob = torch.softmax(crop_logits, dim=1)[0, 1].item()
+            prob = 0.4 * full_prob + 0.6 * crop_prob
+
         clip_probs.append(prob)
         clip_attn.append(None if attn is None else attn[0].cpu().numpy())
 
@@ -253,7 +333,11 @@ def run_inference(model, cfg: dict, device: torch.device, video_path: str | Path
             max_streak = max(max_streak, streak)
         else:
             streak = 0
-    event_detected = max_streak >= 3
+    # Do not let a short false-positive burst label the whole video.
+    # Require both temporal persistence and sufficient probability across
+    # the complete video. This is more conservative for normal motion,
+    # waving, dancing, and exercise clips.
+    event_detected = max_streak >= 3 and mean_prob >= threshold
     label = int(event_detected)
     class_name = cfg["data"]["classes"][label]
 
