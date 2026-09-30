@@ -14,5 +14,6 @@ python-multipart>=0.0.9
 jinja2>=3.1.0
 ultralytics>=8.4.0
 einops>=0.7
+pytorchvideo>=0.1.5
 # MoViNet-A0 second opinion for the webcam (not on PyPI)
 movinet-pytorch @ git+https://github.com/Atze00/MoViNet-pytorch.git

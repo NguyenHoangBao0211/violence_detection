@@ -20,6 +20,7 @@
   </div>
   <div id="alertBox" class="alert" data-i18n="alert_violence">⚠ CẢNH BÁO BẠO LỰC ĐÃ PHÁT HIỆN</div>
   <div id="result" class="result muted" data-i18n="no_result_yet">Chưa có kết quả</div>
+  <div id="timeline" class="timeline" hidden></div>
   <div id="attn" class="attn"></div>
   <div id="resultActions" class="result-actions" hidden></div>
 </section>
@@ -36,14 +37,57 @@
   const fileMeta = document.getElementById("fileMeta");
   const resetBtn = document.getElementById("btnReset");
   const resultActions = document.getElementById("resultActions");
+  const timeline = document.getElementById("timeline");
   const t = (key) => (window.VD ? window.VD.t(key) : key);
   let objectUrl = null;
+
+  const fmtTime = (s) => {
+    const m = Math.floor(s / 60);
+    return `${m}:${(s - m * 60).toFixed(1).padStart(4, "0")}`;
+  };
+
+  // Violence probability per sliding window, threshold line, and the
+  // detected segments shaded. Clicking a segment seeks the preview there.
+  function renderTimeline(j) {
+    const probs = j.clip_probs || [];
+    const times = j.clip_times || [];
+    const duration = j.duration_s || times[times.length - 1] || 1;
+    const segments = j.segments || [];
+    if (!probs.length) { timeline.hidden = true; timeline.innerHTML = ""; return; }
+    const W = 600, H = 120, pad = 4;
+    const x = (s) => pad + (s / duration) * (W - 2 * pad);
+    const y = (p) => H - pad - p * (H - 2 * pad);
+    const points = probs.map((p, i) => `${x(times[i] ?? 0).toFixed(1)},${y(p).toFixed(1)}`).join(" ");
+    const bands = segments.map((s) =>
+      `<rect class="tl-band" x="${x(s.start_s)}" y="${pad}" width="${Math.max(2, x(s.end_s) - x(s.start_s))}" height="${H - 2 * pad}"/>`
+    ).join("");
+    const thr = y(j.threshold ?? 0.5);
+    const list = segments.length
+      ? segments.map((s, i) =>
+          `<li><button type="button" class="tl-seg" data-t="${s.start_s}">${fmtTime(s.start_s)} – ${fmtTime(s.end_s)}</button>` +
+          `<span class="muted">${t("segment_prob")}${(s.prob_max * 100).toFixed(1)}%</span></li>`
+        ).join("")
+      : `<li class="muted">${t("no_segments")}</li>`;
+    timeline.innerHTML =
+      `<p class="muted">${t("timeline_label")}</p>` +
+      `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${t("timeline_label")}">` +
+      `${bands}<line class="tl-thr" x1="${pad}" x2="${W - pad}" y1="${thr}" y2="${thr}"/>` +
+      `<polyline class="tl-line" points="${points}"/></svg>` +
+      `<div class="tl-axis muted"><span>0:00.0</span><span>${fmtTime(duration)}</span></div>` +
+      `<p class="muted">${t("segments_label")}</p><ul class="tl-list">${list}</ul>`;
+    timeline.hidden = false;
+    timeline.querySelectorAll(".tl-seg").forEach((b) => b.addEventListener("click", () => {
+      preview.currentTime = Number(b.dataset.t);
+      preview.play().catch(() => {});
+    }));
+  }
 
   input.addEventListener("change", () => {
     const file = input.files[0];
     alertBox.classList.remove("show");
     attn.innerHTML = "";
     resultActions.hidden = true;
+    timeline.hidden = true;
     if (!file) {
       preview.style.display = "none";
       result.textContent = t("no_result_yet");
@@ -69,6 +113,7 @@
     result.className = "result muted";
     alertBox.classList.remove("show");
     attn.innerHTML = "";
+    timeline.hidden = true;
     const fd = new FormData();
     fd.append("file", file);
     fd.append("source", "upload");
@@ -82,6 +127,7 @@
       result.innerHTML = `${t("result_label")}<span class="${bad ? "violence" : "ok"}">${predLabel}</span><br/>${t("confidence_label")}${pct}%<br/><span class="muted">${t("saved_history_prefix")}${j.history_id} · ${j.created_at || ""}</span>`;
       result.className = "result";
       if (bad) alertBox.classList.add("show");
+      renderTimeline(j);
       if (j.attention_url) {
         attn.innerHTML = `<p class="muted">${t("attention_label")}</p><img src="${j.attention_url}" alt="attention"/>`;
       }
@@ -98,7 +144,7 @@
   });
   resetBtn.addEventListener("click", () => {
     input.value = ""; preview.removeAttribute("src"); preview.style.display = "none";
-    fileMeta.hidden = true; alertBox.classList.remove("show"); attn.innerHTML = ""; resultActions.hidden = true;
+    fileMeta.hidden = true; alertBox.classList.remove("show"); attn.innerHTML = ""; resultActions.hidden = true; timeline.hidden = true;
     result.textContent = t("no_result_yet"); result.className = "result muted";
   });
 })();

@@ -29,11 +29,11 @@ web_dir = root / "web"
 templates = Jinja2Templates(directory=str(web_dir / "templates"))
 
 cfg = load_config(root / "configs/default.yaml")
-ckpt = root / "checkpoints" / "best2.pt"
-# Webcam prefers the model fine-tuned on webcam clips (notebooks/finetune_webcam.py).
-webcam_ckpt = root / "checkpoints" / "best_webcam.pt"
-if not webcam_ckpt.exists():
-    webcam_ckpt = root / "checkpoints" / "best2.pt"
+ckpt = root / "checkpoints" / "resnet50_bilstm_attention.pt"
+if not ckpt.exists():
+    ckpt = root / "checkpoints" / "best2.pt"
+# Camera and upload both use ResNet50–BiLSTM–Attention.
+webcam_ckpt = ckpt
 if not ckpt.exists():
     ckpt = root / "checkpoints" / "MoBiLSTM_model.h5"
 if not ckpt.exists():
@@ -61,7 +61,10 @@ else:
 
 if webcam_ckpt.exists():
     try:
-        _webcam_model, _webcam_cfg, _webcam_device = load_detector(webcam_ckpt, cfg)
+        if _model is not None and webcam_ckpt.resolve() == Path(ckpt).resolve():
+            _webcam_model, _webcam_cfg, _webcam_device = _model, _cfg, _device
+        else:
+            _webcam_model, _webcam_cfg, _webcam_device = load_detector(webcam_ckpt, cfg)
         # The checkpoint's saved threshold (0.6) was tuned on RWF-2000/AIRTLab,
         # where "non_violence" clips are mostly low-motion. Ordinary webcam
         # movement (walking, waving) sits well above that on this model, so
@@ -70,6 +73,9 @@ if webcam_ckpt.exists():
         # webcam footage to stop conflating motion with violence.
         # A webcam fine-tuned checkpoint carries its own validated threshold.
         if webcam_ckpt.name == "best2.pt":
+            if _webcam_cfg is _cfg:
+                _webcam_cfg = dict(_cfg)
+                _webcam_cfg["infer"] = dict(_cfg["infer"])
             _webcam_cfg["infer"]["threshold"] = 0.75
     except Exception as exc:  # noqa: BLE001
         _webcam_model_error = str(exc)
@@ -197,6 +203,7 @@ def health() -> dict:
         "checkpoint": str(ckpt),
         "error": _model_error,
         "webcam_checkpoint": str(webcam_ckpt),
+        "webcam_mode": "resnet50_bilstm_attention",
         "webcam_movinet_veto": movinet_veto.get_model() is not None,
         "webcam_movinet_error": movinet_veto.error(),
         "db": str(root / "data" / "history.db"),
@@ -232,10 +239,19 @@ def _prediction_payload(result: dict, *, history_id: int | None = None, extra: d
         "n_clips": result.get("n_clips"),
         "threshold": result.get("threshold", 0.5),
         "boxes": result.get("boxes") or [],
+        "poses": result.get("poses") or [],
         "latency_ms": result.get("latency_ms"),
         "movinet_prob": result.get("movinet_prob"),
+        "peak_frame": result.get("peak_frame"),
         "history_id": history_id,
         "backend": _backend,
+        "face_label": result.get("face_label"),
+        "emotion": result.get("emotion"),
+        "mode": result.get("mode"),
+        "duration_s": result.get("duration_s"),
+        "segments": result.get("segments"),
+        "clip_probs": result.get("clip_probs"),
+        "clip_times": result.get("clip_times"),
     }
     if extra:
         payload.update(extra)
@@ -325,7 +341,13 @@ async def save_webcam_event(
         video_path=video,
         note=note,
     )
-    return {"ok": True, "history_id": hist_id, "video_url": _rel_media(video), "duration_s": duration, "note": note}
+    return {
+        "ok": True,
+        "history_id": hist_id,
+        "video_url": _rel_media(video),
+        "duration_s": duration,
+        "note": note,
+    }
 
 
 @app.post("/predict/live")
@@ -333,7 +355,7 @@ async def predict_live(
     frames: list[UploadFile] = File(...),
     save_history: str = Form("0"),
 ) -> dict:
-    """Live webcam → CNN–LSTM + bounding box."""
+    """Live webcam: ResNet50–BiLSTM–Attention trên toàn cảnh và vùng người."""
     _ensure_model("webcam")
     if not frames:
         raise HTTPException(400, "Thiếu frame camera")
@@ -474,8 +496,12 @@ async def predict(
         result = await run_in_threadpool(run_inference, selected_model, selected_cfg, selected_device, tmp, out)
 
         pred_class = result["pred_class"]
-        prob_v = float(result["violence_prob_mean"])
-        prob = prob_v if pred_class == "violence" else (1.0 - prob_v)
+        # Same confidence the page shows: the strongest window for violence,
+        # since the video mean is diluted by the normal part of the video.
+        if pred_class == "violence":
+            prob = float(result["violence_prob_max"])
+        else:
+            prob = 1.0 - float(result["violence_prob_mean"])
         saved = save_video_copy(tmp, pred_class, suffix)
         attn = out / "attention_best_clip.png"
         attn_path = None

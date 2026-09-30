@@ -155,27 +155,90 @@ class MobileNetBiLSTM(nn.Module):
         return self.head(z[:, -1]), None
 
 
+def _lstm_from_cfg(input_dim: int, m: dict) -> tuple[nn.LSTM, int]:
+    hidden = m.get("lstm_hidden", 512)
+    layers = m.get("lstm_layers", 2)
+    bidirectional = m.get("bidirectional", True)
+    lstm = nn.LSTM(
+        input_dim, hidden, layers, batch_first=True, bidirectional=bidirectional,
+        dropout=m.get("dropout", 0.5) if layers > 1 else 0.0,
+    )
+    return lstm, hidden * (2 if bidirectional else 1)
+
+
+def _pool(z: torch.Tensor, attention: TemporalAttention | None) -> tuple[torch.Tensor, torch.Tensor | None]:
+    # Without attention every frame gets the same weight. The last step alone
+    # would give the backward direction of a BiLSTM only one frame of context.
+    if attention is None:
+        return z.mean(dim=1), None
+    return attention(z)
+
+
 class ResNet50BiLSTMAttention(nn.Module):
-    """Compatibility model for checkpoints exported by the training notebook."""
+    """Model exported by the training notebook.
+
+    `model.bidirectional` and `model.use_attention` switch the ablation
+    variants (LSTM vs BiLSTM, attention vs mean pooling) with the same keys.
+    """
 
     def __init__(self, cfg: dict):
         super().__init__()
         net = resnet50(weights=None)
         self.cnn = nn.Sequential(*list(net.children())[:-1])
-        m = cfg["model"]
-        hidden = m.get("lstm_hidden", 512)
-        self.lstm = nn.LSTM(
-            2048, hidden, m.get("lstm_layers", 2), batch_first=True,
-            bidirectional=m.get("bidirectional", True),
-            dropout=m.get("dropout", 0.5) if m.get("lstm_layers", 2) > 1 else 0.0,
-        )
-        out_dim = hidden * (2 if m.get("bidirectional", True) else 1)
-        self.attention = TemporalAttention(out_dim)
+        m = cfg.get("model", {})
+        self.lstm, out_dim = _lstm_from_cfg(2048, m)
+        self.attention = TemporalAttention(out_dim) if m.get("use_attention", True) else None
         self.head = nn.Sequential(nn.Dropout(m.get("dropout", 0.5)), nn.Linear(out_dim, 2))
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
         b, t, c, h, w = x.shape
         z = self.cnn(x.reshape(b * t, c, h, w)).flatten(1)
         z, _ = self.lstm(z.view(b, t, 2048))
-        context, alpha = self.attention(z)
+        context, alpha = _pool(z, self.attention)
+        return self.head(context), alpha
+
+
+_IMAGENET_MEAN = (0.485, 0.456, 0.406)
+_IMAGENET_STD = (0.229, 0.224, 0.225)
+
+
+def motion_frames(x: torch.Tensor) -> torch.Tensor:
+    """Frame-difference clip from an ImageNet-normalised RGB clip (B, T, 3, H, W).
+
+    Matches the notebook's `frame_diffs`: frame 0 is black, frame t is
+    |frame_t - frame_{t-1}| in pixel space, then ImageNet-normalised again.
+    """
+    mean = x.new_tensor(_IMAGENET_MEAN).view(1, 1, 3, 1, 1)
+    std = x.new_tensor(_IMAGENET_STD).view(1, 1, 3, 1, 1)
+    raw = x * std + mean
+    diff = (raw[:, 1:] - raw[:, :-1]).abs()
+    diff = torch.cat([torch.zeros_like(raw[:, :1]), diff], dim=1)
+    return (diff - mean) / std
+
+
+class TwoStreamBiLSTMAttention(nn.Module):
+    """Spatial stream (ResNet50 on RGB) + motion stream (ResNet18 on frame
+    differences), concatenated per frame, then BiLSTM + temporal attention.
+
+    Takes the same RGB clip as the single-stream model and builds the motion
+    input itself, so upload and webcam need no separate preprocessing.
+    """
+
+    def __init__(self, cfg: dict, pretrained: bool = False):
+        super().__init__()
+        rgb = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2 if pretrained else None)
+        self.cnn = nn.Sequential(*list(rgb.children())[:-1])
+        motion = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1 if pretrained else None)
+        self.motion_cnn = nn.Sequential(*list(motion.children())[:-1])
+        m = cfg.get("model", {})
+        self.lstm, out_dim = _lstm_from_cfg(2048 + 512, m)
+        self.attention = TemporalAttention(out_dim) if m.get("use_attention", True) else None
+        self.head = nn.Sequential(nn.Dropout(m.get("dropout", 0.5)), nn.Linear(out_dim, 2))
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
+        b, t, c, h, w = x.shape
+        appearance = self.cnn(x.reshape(b * t, c, h, w)).flatten(1).view(b, t, 2048)
+        moving = self.motion_cnn(motion_frames(x).reshape(b * t, c, h, w)).flatten(1).view(b, t, 512)
+        z, _ = self.lstm(torch.cat([appearance, moving], dim=2))
+        context, alpha = _pool(z, self.attention)
         return self.head(context), alpha
