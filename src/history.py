@@ -47,6 +47,11 @@ def init_db() -> None:
             )
             """
         )
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(detections)")}
+        if "hidden" not in cols:
+            conn.execute(
+                "ALTER TABLE detections ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0"
+            )
         conn.commit()
 
 
@@ -113,13 +118,15 @@ def add_detection(
         return int(cur.lastrowid)
 
 
-def list_detections(limit: int = 100) -> list[dict]:
+def list_detections(limit: int = 100, *, include_hidden: bool = False) -> list[dict]:
     init_db()
+    where = "" if include_hidden else "WHERE hidden = 0"
     with connect() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT id, created_at, source, pred_class, prob, video_path, attention_path, note
             FROM detections
+            {where}
             ORDER BY id DESC
             LIMIT ?
             """,
@@ -139,18 +146,22 @@ def get_detection(det_id: int) -> dict | None:
 
 
 def delete_detection(det_id: int) -> dict | None:
+    """Hide one row from the history page. Stats keep reading it."""
     row = get_detection(det_id)
-    if row is None:
+    if row is None or row.get("hidden"):
         return None
     with connect() as conn:
-        conn.execute("DELETE FROM detections WHERE id = ?", (det_id,))
+        conn.execute("UPDATE detections SET hidden = 1 WHERE id = ?", (det_id,))
         conn.commit()
     return row
 
 
 def delete_all_detections() -> list[dict]:
+    """Hide every visible history row. The database rows stay for statistics."""
     rows = list_detections(100000)
+    if not rows:
+        return []
     with connect() as conn:
-        conn.execute("DELETE FROM detections")
+        conn.execute("UPDATE detections SET hidden = 1 WHERE hidden = 0")
         conn.commit()
     return rows

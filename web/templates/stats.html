@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Thống kê · Violence Detection{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1 data-i18n="stats_page_h1">Thống kê</h1>
+  <p data-i18n="stats_page_p">Tổng hợp từ lịch sử nhận diện đã lưu.</p>
+</section>
+<section class="panel">
+  <div class="stats-grid stats-grid-4">
+    <div class="stat">
+      <div class="stat-label"><span class="stat-ico red"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a7 7 0 00-7 7v5l-1.5 2h17L19 16v-5a7 7 0 00-7-7z"/><path d="M10 20a2 2 0 004 0z"/></svg></span><span data-i18n="stat_alerts_total">Tổng số cảnh báo</span></div>
+      <div class="stat-value red">{{ s.violent }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label"><span class="stat-ico red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><span data-i18n="stat_alerts_today">Cảnh báo hôm nay</span></div>
+      <div class="stat-value red">{{ s.today }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label"><span class="stat-ico blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 12h8M12 8v8"/></svg></span><span data-i18n="stat_total_checks">Tổng lượt nhận diện</span></div>
+      <div class="stat-value">{{ s.total }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label"><span class="stat-ico green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg></span><span data-i18n="stat_avg_conf">Độ tin cậy TB (cảnh báo)</span></div>
+      <div class="stat-value green">{{ s.avg_conf }}{% if s.violent %}<small>%</small>{% endif %}</div>
+    </div>
+  </div>
+</section>
+
+<div class="stats-two">
+  <section class="panel">
+    <div class="panel-head">
+      <h2 class="panel-title"><svg class="ico-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20h16"/><path d="M7 16v-4M11 16V8M15 16v-6M19 16V5"/></svg><span data-i18n="stats_7days">CẢNH BÁO 7 NGÀY QUA</span></h2>
+    </div>
+    <table class="mini">
+      <thead><tr><th data-i18n="th_date">Ngày</th><th data-i18n="th_alerts">Cảnh báo</th><th></th><th data-i18n="th_checks">Lượt nhận diện</th></tr></thead>
+      <tbody>
+        {% for d in days %}
+        <tr>
+          <td>{{ d.date }}</td>
+          <td><b>{{ d.violent }}</b></td>
+          <td style="width:45%"><span class="prob-bar"><span class="high" style="width: {{ d.pct }}%;"></span></span></td>
+          <td>{{ d.total }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  <section class="panel">
+    <div class="panel-head">
+      <h2 class="panel-title"><svg class="ico-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/></svg><span data-i18n="stats_by_source">CẢNH BÁO THEO NGUỒN</span></h2>
+    </div>
+    <table class="mini">
+      <thead><tr><th data-i18n="th_source">Nguồn</th><th data-i18n="th_alerts">Cảnh báo</th></tr></thead>
+      <tbody>
+        <tr><td data-i18n="source_webcam">Webcam</td><td><b>{{ s.webcam }}</b></td></tr>
+        <tr><td data-i18n="source_upload">Tải lên</td><td><b>{{ s.upload }}</b></td></tr>
+        <tr><td data-i18n="pill_ok">Không bạo lực</td><td>{{ s.non_violent }} <span class="muted" data-i18n="checks_suffix">lượt</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+</div>
+{% endblock %}

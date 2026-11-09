@@ -1,28 +1,142 @@
 {% extends "base.html" %}
 {% block title %}Camera · Violence Detection{% endblock %}
 {% block content %}
-<section class="hero dashboard-hero">
-  <h1 data-i18n="camera_hero_h1">Giám sát qua camera</h1>
-  <p data-i18n="camera_hero_p">Phân tích trực tiếp và hiển thị xác suất Bạo lực / Không bạo lực.</p>
-</section>
-<section class="card grid-actions upload-card">
-  <div class="section-heading"><div><h2 data-i18n="camera_h1">Camera trực tiếp</h2><p data-i18n="camera_p">Nhận diện liên tục, ghi từ lúc phát hiện đến khi hành vi kết thúc.</p></div><span class="status-dot" data-i18n="status_ready">Sẵn sàng</span></div>
-  <div id="stage" class="cam-stage" hidden>
-    <video id="cam" autoplay muted playsinline></video>
-    <canvas id="overlay"></canvas>
+<div class="dash">
+  <div class="dash-col">
+    <section class="panel">
+      <div class="panel-head cam-head">
+        <h2 class="panel-title"><i class="dot" id="camDot"></i><span data-i18n="cam_name">CAMERA 01 - Webcam</span></h2>
+        <div class="cam-head-right">
+          <span class="online" id="camOnline"><i class="dot" id="camOnlineDot"></i><span id="camOnlineText" data-i18n="cam_offline">Ngoại tuyến</span></span>
+          <div class="menu">
+            <button type="button" class="icon-round" id="camMenuBtn" aria-label="Menu">
+              <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+            </button>
+            <div class="menu-pop" id="camMenu" hidden>
+              <button id="record10Btn" type="button" disabled data-i18n="btn_record_10s">Quay thử 10s</button>
+              <a href="/history" data-i18n="nav_history">Lịch sử cảnh báo</a>
+              <a href="/settings" data-i18n="nav_settings">Cài đặt</a>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="alert-actions">
+        <button id="exportLiveReportBtn" class="secondary" type="button" disabled data-i18n="btn_export_report">Xuất báo cáo</button>
+      </div>
+      <div id="stage" class="cam-stage">
+        <video id="cam" autoplay muted playsinline></video>
+        <canvas id="overlay"></canvas>
+        <div class="cam-placeholder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/><path d="M3 3l18 18"/></svg>
+          <span data-i18n="cam_placeholder">Camera đang tắt · nhấn ▶ để bắt đầu giám sát</span>
+        </div>
+        <div class="cam-ts" id="camClock" hidden></div>
+        <div class="cam-tag" data-i18n="cam_tag">Camera 01</div>
+        <div id="alertBox" class="alert cam-alert" data-i18n="alert_violence">⚠ CẢNH BÁO BẠO LỰC ĐÃ PHÁT HIỆN</div>
+      </div>
+      <div class="cam-controls">
+        <div class="group">
+          <button id="startBtn" class="ctrl cam-toggle" type="button" title="Bật camera" aria-label="Bật camera">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l12-7z"/></svg>
+          </button>
+          <button id="stopBtn" class="ctrl cam-toggle" type="button" disabled title="Tắt camera" aria-label="Tắt camera">
+            <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+          </button>
+          <span class="ctrl-static" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M17 9l4 6M21 9l-4 6"/></svg>
+          </span>
+          <span class="ctrl-hd" id="camRes">HD</span>
+        </div>
+        <div class="cam-info">
+          <span id="status" class="result muted" data-i18n="camera_off">Chưa bật camera</span>
+          <span id="hud" class="hud muted" data-i18n="hud_default">Bạo lực: —% · Không bạo lực: —%</span>
+        </div>
+        <button id="fullBtn" class="ctrl" type="button" title="Toàn màn hình" aria-label="Toàn màn hình">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+        </button>
+      </div>
+      <div id="eventInfo" class="result" hidden></div>
+      <div id="testResult" class="result muted" hidden></div>
+      <div id="testResultActions" class="result-actions" hidden></div>
+    </section>
+
+    <section class="panel">
+      <div class="feature-head">
+        <span class="feature-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="5" r="2"/><path d="M9 7.5l-2.5 4 3 1.5-1.5 5M9 7.5l3.5 3 2.5-1.2M6.5 11.5L4 12"/><path d="M16 15l4 4M20 15l-4 4"/></svg></span>
+        <div><h3 data-i18n="feat_title">AI Phát Hiện Bạo Lực</h3><p data-i18n="feat_sub">Phát hiện bạo lực – Cảnh báo kịp thời – Bảo vệ mọi người</p></div>
+      </div>
+      <div class="features">
+        <div class="feature">
+          <span class="feature-mini"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="12" cy="10" r="3"/><path d="M7 19c1-2.5 3-3.5 5-3.5s4 1 5 3.5"/></svg></span>
+          <div><b data-i18n="feat1_t">Nhận diện chính xác</b><span data-i18n="feat1_d">AI phân tích hình ảnh theo thời gian thực</span></div>
+        </div>
+        <div class="feature">
+          <span class="feature-mini"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1112 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21a2 2 0 004 0"/></svg></span>
+          <div><b data-i18n="feat2_t">Gửi cảnh báo ngay</b><span data-i18n="feat2_d">Báo động và lưu video bằng chứng tự động</span></div>
+        </div>
+        <div class="feature">
+          <span class="feature-mini"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 010 18z" fill="currentColor"/></svg></span>
+          <div><b data-i18n="feat3_t">Giám sát 24/7</b><span data-i18n="feat3_d">An toàn mọi lúc, mọi nơi</span></div>
+        </div>
+      </div>
+    </section>
   </div>
-  <div class="btn-row">
-    <button id="startBtn" type="button" data-i18n="btn_start_camera">Bật camera</button>
-    <button id="stopBtn" class="secondary" type="button" disabled data-i18n="btn_stop_camera">Tắt</button>
-    <button id="record10Btn" class="secondary" type="button" disabled data-i18n="btn_record_10s">Quay thử 10s</button>
+
+  <div class="dash-col">
+    <section class="panel">
+      <div class="panel-head alert-head">
+        <h2 class="panel-title"><svg class="ico-danger ico-bolt" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg><span data-i18n="alert_panel_title">CẢNH BÁO BẠO LỰC</span><span class="badge badge-muted" id="alertBadge" data-i18n="alert_badge_none">Không có</span></h2>
+      </div>
+      <div class="alert-body" id="alertCard">
+        <div class="alert-empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
+          <span data-i18n="alert_empty">Chưa có cảnh báo bạo lực nào.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title"><svg class="ico-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 15l3-3 3 2 4-5"/></svg><span data-i18n="stats_title">THỐNG KÊ HỆ THỐNG</span></h2>
+        <span class="panel-note" data-i18n="stats_realtime">Cập nhật: Real-time</span>
+      </div>
+      <div class="stats-grid">
+        <div class="stat">
+          <div class="stat-label"><span class="stat-ico red"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a7 7 0 00-7 7v5l-1.5 2h17L19 16v-5a7 7 0 00-7-7z"/><path d="M10 20a2 2 0 004 0z"/></svg></span><span data-i18n="stat_alerts_total">Tổng số cảnh báo</span></div>
+          <div class="stat-value red" id="statAlerts">0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label"><span class="stat-ico green"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5a1 1 0 011-1h16a1 1 0 011 1v10a1 1 0 01-1 1h-6v2h3v2H7v-2h3v-2H4a1 1 0 01-1-1V5z"/></svg></span><span data-i18n="stat_monitoring">Đang giám sát</span></div>
+          <div class="stat-value green" id="statCams">0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label"><span class="stat-ico blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><span data-i18n="stat_uptime">Thời gian hoạt động</span></div>
+          <div class="stat-value" id="statUptime">—</div>
+        </div>
+        <div class="stat wide">
+          <div class="stat-label"><span class="stat-ico blue solid"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7z"/></svg></span><span data-i18n="stat_people">Số người đang theo dõi</span></div>
+          <div class="stat-value" id="statPeople">—</div>
+        </div>
+        <div class="stat wide">
+          <div class="stat-label"><span class="stat-ico blue solid"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l8 3.5v6c0 5-3.4 9-8 10.5C7.4 20.5 4 16.5 4 11.5v-6L12 2z"/></svg></span><span data-i18n="stat_risk">Mức độ nguy cơ</span></div>
+          <div class="stat-value" id="statRisk">—</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title"><svg class="ico-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="17" rx="2"/><path d="M8 2v4M16 2v4M4 10h16"/></svg><span data-i18n="recent_title">LỊCH SỬ CẢNH BÁO</span></h2>
+        <a class="panel-link" href="/history" data-i18n="view_all">Xem tất cả</a>
+      </div>
+      <table class="mini">
+        <thead><tr><th>ID</th><th data-i18n="th_time">Thời gian</th><th data-i18n="th_type">Loại cảnh báo</th><th data-i18n="th_camera">Camera</th><th data-i18n="th_status">Trạng thái</th></tr></thead>
+        <tbody id="recentBody"><tr><td colspan="5" class="mini-empty" data-i18n="recent_empty">Chưa có cảnh báo.</td></tr></tbody>
+      </table>
+      <div class="scan-note"><i class="dot" id="scanDot"></i><span id="scanText" data-i18n="scan_idle">Camera chưa bật</span></div>
+    </section>
   </div>
-  <div id="alertBox" class="alert" data-i18n="alert_violence">⚠ CẢNH BÁO BẠO LỰC ĐÃ PHÁT HIỆN</div>
-  <div id="status" class="result muted" data-i18n="camera_off">Chưa bật camera</div>
-  <div id="hud" class="hud muted" data-i18n="hud_default">Bạo lực: —% · Không bạo lực: —%</div>
-  <div id="eventInfo" class="result" hidden></div>
-  <div id="testResult" class="result muted" hidden></div>
-  <div id="testResultActions" class="result-actions" hidden></div>
-</section>
+</div>
 {% endblock %}
 {% block scripts %}
 <script>
@@ -42,6 +156,197 @@
   const ctx = overlay.getContext("2d");
   const t = (key) => (window.VD ? window.VD.t(key) : key);
 
+  // ===== Dashboard: camera state, alert card, stats, recent alerts =====
+  const camClock = document.getElementById("camClock");
+  const camDot = document.getElementById("camDot");
+  const camOnline = document.getElementById("camOnline");
+  const camOnlineDot = document.getElementById("camOnlineDot");
+  const camOnlineText = document.getElementById("camOnlineText");
+  const camRes = document.getElementById("camRes");
+  const camMenuBtn = document.getElementById("camMenuBtn");
+  const camMenu = document.getElementById("camMenu");
+  const fullBtn = document.getElementById("fullBtn");
+  const alertBadge = document.getElementById("alertBadge");
+  const alertCard = document.getElementById("alertCard");
+  const statAlerts = document.getElementById("statAlerts");
+  const statCams = document.getElementById("statCams");
+  const statUptime = document.getElementById("statUptime");
+  const statPeople = document.getElementById("statPeople");
+  const statRisk = document.getElementById("statRisk");
+  const recentBody = document.getElementById("recentBody");
+  const scanDot = document.getElementById("scanDot");
+  const scanText = document.getElementById("scanText");
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  let dashTimer = null;
+  let sessionAlert = null; // alert raised by this camera session; wins over history
+
+  camMenuBtn.addEventListener("click", (e) => { e.stopPropagation(); camMenu.hidden = !camMenu.hidden; });
+  document.addEventListener("click", () => { camMenu.hidden = true; });
+  fullBtn.addEventListener("click", () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (stage.requestFullscreen) stage.requestFullscreen();
+  });
+
+  // "Xử lý" state lives in this browser only (per-viewer convenience).
+  function handledIds() {
+    try { return new Set(JSON.parse(localStorage.getItem("vd_handled") || "[]")); } catch (e) { return new Set(); }
+  }
+  function markHandled(id) {
+    const ids = handledIds();
+    ids.add(id);
+    try { localStorage.setItem("vd_handled", JSON.stringify([...ids].slice(-500))); } catch (e) {}
+  }
+
+  function setI18n(el, key) {
+    el.dataset.i18n = key;
+    el.textContent = t(key);
+  }
+
+  function setOnline(on) {
+    camOnline.classList.toggle("on", on);
+    camOnlineDot.className = on ? "dot ok" : "dot";
+    camDot.className = on ? "dot ok" : "dot";
+    setI18n(camOnlineText, on ? "cam_online" : "cam_offline");
+    statCams.textContent = on ? "1" : "0";
+    scanDot.className = on ? "dot primary pulse" : "dot";
+    setI18n(scanText, on ? "scan_running" : "scan_idle");
+    camClock.hidden = !on;
+    camRes.textContent = on && cam.videoHeight ? `${cam.videoHeight}p` : "HD";
+    if (!on) {
+      statUptime.textContent = "—";
+      statPeople.textContent = "—";
+      setRisk(null);
+    }
+  }
+
+  function tickDashboard() {
+    const now = new Date();
+    camClock.textContent = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())} `
+      + `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+    if (cam.videoHeight) camRes.textContent = `${cam.videoHeight}p`;
+    const up = Math.max(0, Math.floor((Date.now() - cameraStartWall) / 1000));
+    statUptime.innerHTML = up < 3600
+      ? `${pad2(Math.floor(up / 60))}:${pad2(up % 60)}`
+      : `${(up / 3600).toFixed(1)}<small>${t("unit_hours")}</small>`;
+  }
+
+  function setRisk(key) {
+    statRisk.className = "stat-value" + (key === "risk_high" ? " red" : key === "risk_mid" ? " amber" : key === "risk_low" ? " green" : "");
+    if (key) setI18n(statRisk, key);
+    else { delete statRisk.dataset.i18n; statRisk.textContent = "—"; }
+  }
+
+  function updateLiveStats(p, thr, boxes) {
+    statPeople.textContent = Array.isArray(boxes) ? String(boxes.length) : "—";
+    setRisk(activeEvent || p >= thr ? "risk_high" : p >= thr * 0.6 ? "risk_mid" : "risk_low");
+  }
+
+  // Small JPEG of the current camera frame for the alert card.
+  function snapshot() {
+    if (!cam.videoWidth) return "";
+    const c = document.createElement("canvas");
+    c.width = 320;
+    c.height = Math.round(320 * cam.videoHeight / cam.videoWidth);
+    c.getContext("2d").drawImage(cam, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.8);
+  }
+
+  const fmtClock = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())} - `
+    + `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+
+  // state: "live" (event in progress), "open" (saved, not handled), "done" (handled).
+  function renderAlert(a) {
+    const { img, videoUrl, clock, peak, state, id, source } = a;
+    const badge = { live: ["badge-danger", "alert_badge_live"], open: ["badge-danger", "alert_badge_live"], done: ["badge-ok", "alert_badge_done"] }[state];
+    alertBadge.className = `badge ${badge[0]}`;
+    setI18n(alertBadge, badge[1]);
+    const thumb = img
+      ? `<img class="alert-thumb" src="${img}" alt=""/>`
+      : videoUrl
+        ? `<video class="alert-thumb" src="${esc(videoUrl)}#t=0.5" preload="metadata" muted playsinline></video>`
+        : `<div class="alert-thumb"></div>`;
+    const camKey = source === "upload" ? "source_upload_cam" : "cam_name";
+    alertCard.innerHTML = `
+      <div class="alert-item">
+        ${thumb}
+        <div class="alert-meta">
+          <strong data-i18n="${camKey}"></strong>
+          <span class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>${esc(clock)}</span>
+          <span class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-5 4 3 5-7"/><path d="M17 8h4v4"/></svg><span><span data-i18n="alert_conf"></span>: ${(peak * 100).toFixed(0)}%</span></span>
+          ${state === "live"
+            ? `<span class="notice"><i class="dot bad pulse"></i><span data-i18n="alert_ongoing"></span></span>`
+            : `<span class="notice"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a6 6 0 00-6 6v4l-2 3h16l-2-3V9a6 6 0 00-6-6z"/><path d="M10 19a2 2 0 004 0z"/></svg><span data-i18n="alert_logged"></span></span>`}
+        </div>
+      </div>
+      <div class="alert-actions">
+        ${videoUrl
+          ? `<a class="btn" href="${esc(videoUrl)}" target="_blank" rel="noopener" data-i18n="alert_view"></a>`
+          : `<button type="button" disabled data-i18n="alert_view"></button>`}
+        <button type="button" class="outline" id="alertAckBtn" ${state === "open" ? "" : "disabled"} data-i18n="${state === "done" ? "alert_badge_done" : "alert_ack"}"></button>
+      </div>`;
+    alertCard.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+    const ack = document.getElementById("alertAckBtn");
+    if (state === "open" && id != null) {
+      ack.addEventListener("click", () => {
+        markHandled(id);
+        renderAlert({ ...a, state: "done" });
+        loadRecent();
+      });
+    }
+  }
+
+  async function loadRecent() {
+    try {
+      const r = await fetch("/api/history?limit=1000");
+      if (!r.ok) return;
+      const items = (await r.json()).items || [];
+      const violent = items.filter((it) => it.pred_class === "violence");
+      const handled = handledIds();
+      statAlerts.textContent = String(violent.length);
+      if (!sessionAlert && violent.length) {
+        const it = violent[0];
+        const d = new Date(it.created_at);
+        renderAlert({
+          videoUrl: it.video_url, id: it.id, source: it.source, peak: Number(it.prob) || 0,
+          clock: Number.isNaN(d.getTime()) ? String(it.created_at) : fmtClock(d),
+          state: handled.has(it.id) ? "done" : "open",
+        });
+      }
+      const rows = violent.slice(0, 5);
+      if (!rows.length) {
+        recentBody.innerHTML = `<tr><td colspan="5" class="mini-empty" data-i18n="recent_empty">${t("recent_empty")}</td></tr>`;
+        return;
+      }
+      recentBody.innerHTML = rows.map((it) => {
+        const time = String(it.created_at || "").slice(11, 19) || "--";
+        const camKey = it.source === "upload" ? "source_upload_cam" : "cam_tag";
+        const done = handled.has(it.id);
+        const idText = `#${String(it.id).padStart(3, "0")}`;
+        return `<tr><td>${it.video_url ? `<a href="${esc(it.video_url)}" target="_blank" rel="noopener">${idText}</a>` : idText}</td><td>${esc(time)}</td>`
+          + `<td><span class="badge badge-danger" data-i18n="pill_violence">${t("pill_violence")}</span></td>`
+          + `<td data-i18n="${camKey}">${t(camKey)}</td>`
+          + `<td><span class="badge ${done ? "badge-ok" : "badge-danger"}" data-i18n="${done ? "alert_badge_done" : "alert_badge_live"}">${t(done ? "alert_badge_done" : "alert_badge_live")}</span></td></tr>`;
+      }).join("");
+    } catch (e) { /* dashboard extras only; detection keeps running */ }
+  }
+
+  function onEventStart(ev) {
+    ev.img = snapshot();
+    ev.clockText = fmtClock(new Date(cameraStartWall + (ev.start - cameraStartMs)));
+    sessionAlert = { img: ev.img, clock: ev.clockText, peak: ev.peak, state: "live", source: "webcam" };
+    renderAlert(sessionAlert);
+  }
+
+  function onEventSaved(ev, j) {
+    sessionAlert = { img: ev.img, clock: ev.clockText, peak: ev.peak, state: "open", source: "webcam",
+      id: j ? j.history_id : null, videoUrl: j ? j.video_url : null };
+    renderAlert(sessionAlert);
+    loadRecent();
+  }
+
+  loadRecent();
+
   // Model được train trên các clip 16 khung hình LIÊN TIẾP lấy trực tiếp từ
   // video gốc (~25-30fps) → mỗi clip chỉ ~0.5-0.6 giây chuyển động thực. Lấy
   // mẫu webcam ở 150ms/khung khiến 16 khung trải dài tới 2.4 giây (~6.7fps
@@ -51,10 +356,10 @@
   // requestVideoFrameCallback ở 30fps (33ms/khung), ngưỡng 40ms trước đây bỏ
   // mất 1 khung mỗi 2 khung → 16 khung trải ~1.07s, chuyển động nhanh gấp đôi
   // so với clip train (16 khung liên tiếp ≈ 0.53s ở 30fps RWF-2000).
-  const NEED_FRAMES = 16;
+  const NEED_FRAMES = {{ window_frames | default(16) | tojson }};
   // Gửi ~1 giây (24 khung): ResNet50-BiLSTM dùng 16 khung cuối liên tiếp,
   // MoViNet-A0 lấy 8 khung trải đều cả giây (cách nó được train, ~8fps).
-  const SEND_FRAMES = 24;
+  const SEND_FRAMES = Math.max(24, NEED_FRAMES);
   // ===== Model thứ 2: MoViNet phủ quyết báo nhầm =====
   // best2.pt chấm nhầm cảnh người đứng yên trong phòng là bạo lực (trung bình
   // 0.88 trên 398 cửa sổ thật), MoViNet chấm đúng các cảnh đó ~0.01 nhưng vẫn
@@ -123,6 +428,8 @@
   let nextAnalyzeT = 0;
   let cameraStartMs = 0;
   let cameraStartWall = 0;
+  let reportSession = null;
+  const exportLiveReportBtn = document.getElementById("exportLiveReportBtn");
   let testRecorder = null;
   let testChunks = [];
   let testCountdownId = null;
@@ -160,24 +467,24 @@
       const vLabel = t("overlay_violence");
       const nLabel = t("overlay_nonviolence");
       const mood = lastResult.face_label;
-      const label = mood ? `${mood} ${bad ? vPct : nPct}%` : (bad ? `${vLabel} ${vPct}%` : `${nLabel} ${nPct}%`);
+      const label = (mood ? `${mood} ${bad ? vPct : nPct}%` : (bad ? `${vLabel} ${vPct}%` : `${nLabel} ${nPct}%`)).toUpperCase();
       const boxes = lastResult.boxes && lastResult.boxes.length
         ? lastResult.boxes
-        : [{ x: 0.18, y: 0.1, w: 0.64, h: 0.8 }];
+        : [];
 
       boxes.forEach((b) => {
         const x = b.x * w;
         const y = b.y * h;
         const bw = b.w * w;
         const bh = b.h * h;
-        ctx.lineWidth = Math.max(3, Math.round(w / 280));
+        ctx.lineWidth = Math.max(2, Math.round(w / 420));
         ctx.strokeStyle = color;
         ctx.strokeRect(x, y, bw, bh);
 
-        ctx.font = `bold ${Math.max(14, Math.round(w / 28))}px Segoe UI, sans-serif`;
+        ctx.font = `600 ${Math.max(12, Math.round(w / 52))}px "Be Vietnam Pro", Segoe UI, sans-serif`;
         const pad = 8;
         const tw = ctx.measureText(label).width;
-        const th = Math.max(22, Math.round(w / 22));
+        const th = Math.max(20, Math.round(w / 34));
         const ty = Math.max(th + 4, y);
         ctx.fillStyle = color;
         ctx.fillRect(x, ty - th, tw + pad * 2, th);
@@ -207,16 +514,6 @@
           ctx.fill();
         });
       });
-
-      // Top HUD bar
-      ctx.fillStyle = "rgba(15,23,42,0.55)";
-      ctx.fillRect(0, 0, w, 36);
-      ctx.fillStyle = "#fff";
-      ctx.font = "600 14px Segoe UI, sans-serif";
-      const hudLine = lastResult.face_label
-        ? `${lastResult.face_label}   |   ${vLabel} ${vPct}%   |   ${nLabel} ${nPct}%`
-        : `${vLabel} ${vPct}%   |   ${nLabel} ${nPct}%`;
-      ctx.fillText(hudLine, 12, 23);
     }
 
     rafId = requestAnimationFrame(drawOverlay);
@@ -280,6 +577,7 @@
           activeEvent = { start: candidate.start, lastViolent: Math.max(mark, winEnd), peak: candidate.peak };
           candidate = null;
           exitStreak = 0;
+          onEventStart(activeEvent);
         }
       } else {
         candidate = null;
@@ -303,6 +601,8 @@
     if (!ev) return;
     const startS = secOnCam(ev.start);
     const endS = secOnCam(ev.lastViolent);
+    const reportEvent = { startS, endS, peak: ev.peak, status: "Đang lưu", historyId: null };
+    if (reportSession) reportSession.events.push(reportEvent);
     const summary = `Bạo lực từ giây ${startS.toFixed(1)} → ${endS.toFixed(1)} `
       + `(${clockOf(ev.start)} → ${clockOf(ev.lastViolent)}, ${(endS - startS).toFixed(1)}s)`;
     eventInfo.hidden = false;
@@ -310,7 +610,12 @@
     eventInfo.textContent = `${summary} · đang lưu video...`;
 
     let clip = recentFrames.filter((f) => f.t >= ev.start - PREROLL_MS && f.t <= ev.lastViolent + POSTROLL_MS);
-    if (clip.length < 2) { eventInfo.textContent = summary; return; }
+    if (clip.length < 2) {
+      reportEvent.status = "Không đủ frame để lưu";
+      eventInfo.textContent = summary;
+      onEventSaved(ev, null);
+      return;
+    }
     const spanS = (clip[clip.length - 1].t - clip[0].t) / 1000;
     const step = Math.ceil(clip.length / MAX_EVENT_FRAMES);
     clip = clip.filter((_, i) => i % step === 0);
@@ -328,6 +633,8 @@
       .then(async (r) => {
         const j = await r.json();
         if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : "Không lưu được video sự kiện");
+        reportEvent.status = "Đã lưu";
+        reportEvent.historyId = j.history_id;
         eventInfo.innerHTML = "";
         eventInfo.append(`${summary} · đã lưu vào lịch sử `);
         if (j.video_url) {
@@ -335,8 +642,14 @@
           a.href = j.video_url; a.target = "_blank"; a.textContent = "(xem video)";
           eventInfo.append(a);
         }
+        if (j.mail_alert) eventInfo.append(" · " + t(j.mail_alert.sent ? "mail_sent" : "mail_failed"));
+        onEventSaved(ev, j);
       })
-      .catch((e) => { eventInfo.textContent = `${summary} · lỗi lưu: ${e.message}`; });
+      .catch((e) => {
+        reportEvent.status = "Lưu thất bại";
+        eventInfo.textContent = `${summary} · lỗi lưu: ${e.message}`;
+        onEventSaved(ev, null);
+      });
   }
 
   // Lấy mẫu bám theo khung hình thật của camera (requestVideoFrameCallback) khi
@@ -385,6 +698,7 @@
     const clip = nextClip();
     if (!running || busy || !clip) return;
     busy = true;
+    const predictionSession = reportSession;
     const { take, winStart, winEnd, nextT } = clip;
     nextAnalyzeT = nextT;
     status.textContent = t("detecting_realtime");
@@ -396,6 +710,11 @@
       const r = await fetch("/predict/live", { method: "POST", body: fd });
       const j = await r.json();
       if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : t("detect_error_generic"));
+      if (!running || predictionSession !== reportSession) return;
+      if (reportSession) {
+        reportSession.predictions += 1;
+        reportSession.threshold = j.threshold;
+      }
       if (j.mode === "face") {
         if (!running) return;
         const p = Number(j.violence_prob_mean || 0);
@@ -465,6 +784,7 @@
       hud.className = "hud";
       if (bad) alertBox.classList.add("show");
       else alertBox.classList.remove("show");
+      updateLiveStats(meanProbability, thr, j.boxes);
     } catch (e) {
       status.textContent = t("error_label") + e.message;
       status.className = "result violence";
@@ -558,7 +878,7 @@
     }
     cam.srcObject = stream;
     await cam.play().catch(() => {});
-    stage.hidden = false;
+    stage.classList.add("is-live");
     startBtn.disabled = true;
     stopBtn.disabled = false;
     record10Btn.disabled = false;
@@ -574,11 +894,16 @@
     nextAnalyzeT = 0;
     cameraStartMs = performance.now();
     cameraStartWall = Date.now();
+    reportSession = { start: cameraStartWall, end: null, predictions: 0, threshold: null, events: [] };
+    exportLiveReportBtn.disabled = false;
     status.textContent = t("camera_running");
     status.className = "result muted";
     hud.textContent = t("hud_default");
     hud.className = "hud muted";
     alertBox.classList.remove("show");
+    setOnline(true);
+    tickDashboard();
+    dashTimer = setInterval(tickDashboard, 1000);
     drawOverlay();
     startSampling();
     predictTimer = setInterval(predictOnce, PREDICT_EVERY_MS);
@@ -586,8 +911,65 @@
     setTimeout(predictOnce, SAMPLE_MS * NEED_FRAMES + 200);
   });
 
+
+  const escapeLiveReport = (value) => String(value ?? "—").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[ch]));
+  exportLiveReportBtn.addEventListener("click", async () => {
+    if (!reportSession) return;
+    const session = reportSession;
+    const end = session.end ?? Date.now();
+    const dateText = (value) => new Date(value).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
+    const events = [...session.events];
+    if (activeEvent) events.push({
+      startS: secOnCam(activeEvent.start), endS: secOnCam(activeEvent.lastViolent),
+      peak: activeEvent.peak, status: "Đang diễn ra", historyId: null,
+    });
+    const fields = [
+      ["Nguồn", "Camera 01 - Webcam"], ["Bắt đầu phiên", dateText(session.start)],
+      [session.end ? "Kết thúc phiên" : "Thời điểm xuất trong phiên", dateText(end)],
+      ["Thời gian giám sát", ((end - session.start) / 1000).toFixed(1) + " giây"],
+      ["Số lượt phân tích thành công", session.predictions], ["Ngưỡng nhận diện gần nhất", session.threshold],
+      ["Số sự kiện ghi nhận", events.length],
+      ["Tổng thời gian các sự kiện", events.reduce((sum, ev) => sum + Math.max(0, ev.endS - ev.startS), 0).toFixed(1) + " giây"],
+    ];
+    const summary = fields.map(([label, value]) => '<tr><th>' + escapeLiveReport(label) + '</th><td>' + escapeLiveReport(value) + '</td></tr>').join("");
+    const rows = events.map((ev, i) => '<tr>' + [i + 1, ev.startS.toFixed(1) + 's', ev.endS.toFixed(1) + 's',
+      (100 * ev.peak).toFixed(1) + '%', ev.status, ev.historyId == null ? '—' : '#' + ev.historyId]
+      .map(value => '<td>' + escapeLiveReport(value) + '</td>').join('') + '</tr>').join('');
+    const report = '<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+      + '<title>Báo cáo giám sát webcam</title><style>body{font:16px Arial,sans-serif;color:#172033;max-width:1000px;margin:40px auto;padding:0 24px}h1{font-size:26px}table{width:100%;border-collapse:collapse;margin:20px 0}th,td{border:1px solid #cbd5e1;padding:10px;text-align:left;overflow-wrap:anywhere}th{background:#f1f5f9}p{line-height:1.6}button{padding:10px 18px;cursor:pointer}@media print{button{display:none}body{margin:0;max-width:none}tr{break-inside:avoid}}</style></head><body>'
+      + '<button type="button" onclick="window.print()">In / Lưu PDF</button><h1>BÁO CÁO GIÁM SÁT WEBCAM</h1>'
+      + '<p>Thời gian theo giờ Việt Nam. Báo cáo cho phiên webcam gần nhất trên trang này.</p><table><tbody>' + summary + '</tbody></table>'
+      + '<h2>Sự kiện bạo lực</h2>' + (events.length ? '<table><thead><tr><th>STT</th><th>Bắt đầu từ đầu phiên</th><th>Kết thúc từ đầu phiên</th><th>Điểm cao nhất</th><th>Trạng thái lưu</th><th>Mã lịch sử</th></tr></thead><tbody>' + rows + '</tbody></table>' : '<p>Chưa ghi nhận sự kiện bạo lực trong phiên này.</p>')
+      + '<p>Các khoảng thời gian là ước lượng từ cửa sổ phân tích. Sự kiện đang diễn ra hoặc đang lưu có thể thay đổi; xuất lại sau khi tắt camera và lưu hoàn tất để nhận kết quả cập nhật. Không có sự kiện không đồng nghĩa mọi khung hình đã được phân tích.</p></body></html>';
+    exportLiveReportBtn.disabled = true;
+    let pdfBlob;
+    try {
+      const form = new FormData();
+      form.append("report", report);
+      const response = await fetch("/reports/pdf", { method: "POST", body: form });
+      if (!response.ok) throw new Error("Không tạo được PDF. Vui lòng thử lại.");
+      pdfBlob = await response.blob();
+    } catch (error) {
+      window.alert(error.message);
+      return;
+    } finally {
+      exportLiveReportBtn.disabled = false;
+    }
+    const url = URL.createObjectURL(pdfBlob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "bao-cao-webcam-" + session.start + ".pdf";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+
   stopBtn.addEventListener("click", () => {
     running = false;
+    if (reportSession) reportSession.end = Date.now();
     if (sampleTimer) clearInterval(sampleTimer);
     if (predictTimer) clearInterval(predictTimer);
     sampleTimer = predictTimer = null;
@@ -601,7 +983,10 @@
     stream = null;
     cam.srcObject = null;
     ctx.clearRect(0, 0, overlay.width, overlay.height);
-    stage.hidden = true;
+    stage.classList.remove("is-live");
+    if (dashTimer) clearInterval(dashTimer);
+    dashTimer = null;
+    setOnline(false);
     startBtn.disabled = false;
     stopBtn.disabled = true;
     record10Btn.disabled = true;

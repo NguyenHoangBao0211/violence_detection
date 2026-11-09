@@ -1,5 +1,18 @@
 # Phát hiện bạo lực — CNN + BiLSTM + Attention
 
+## Webcam kết hợp hai model
+
+Camera dùng `checkpoints/mobilenet_bilstm_attention.pt` và model cũ
+`checkpoints/resnet50_bilstm_attention.pt` (dự phòng `best2.pt`). Điểm bạo lực
+là trung bình 50/50 của hai model, với ngưỡng của MobileNet (hiện tại 0.5).
+Bộ lọc chuyển động và MoViNet hiện có tiếp tục xử lý điểm kết hợp.
+Trang upload giữ nguyên model cũ. Khởi động lại backend để nạp thay đổi.
+
+`/health` trả đường dẫn hai checkpoint và `webcam_ensemble`.
+`/predict/live` trả `model_probs.primary` (MobileNet) và
+`model_probs.secondary` (model cũ) trước bộ lọc. Hai lượt suy luận làm tăng
+độ trễ; cần đo trên webcam thực tế để chọn trọng số và ngưỡng.
+
 Dự án dùng **notebook Kaggle để train** và **FastAPI để chạy web localhost**.
 Mô hình phân loại cả clip thành `non_violence` hoặc `violence`.
 
@@ -144,3 +157,18 @@ run_web.bat                          Khởi động web trên Windows
 ```
 
 Luồng train local/pipeline demo cũ đã được gỡ; huấn luyện và đánh giá dataset thực hiện trong notebook Kaggle.
+
+## Email cảnh báo cho Upload và Webcam
+
+Đặt `EMAIL_ALERTS_ENABLED=false` trong `.env` để tạm tắt email cho cả Upload và Webcam; đặt `true` để bật lại. Khởi động lại backend sau khi thay đổi.
+
+Cấu hình `ALERT_TO`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` trong `.env` theo `.env.example`, rồi khởi động lại backend. SMTP dùng STARTTLS (mặc định cổng 587). Với Gmail, dùng mật khẩu ứng dụng cho tài khoản gửi.
+
+- Upload: gửi một email sau khi lưu kết quả nếu nhãn toàn video là bạo lực hoặc có đoạn bạo lực, kể cả khi nhãn toàn video không bạo lực.
+- Webcam: gửi một email khi sự kiện kết thúc và đã lưu lịch sử; không gửi theo từng frame hoặc lượt dự đoán.
+- Giao diện hiển thị trạng thái gửi mail. Lỗi SMTP không làm mất kết quả phân tích hoặc bản ghi đã lưu.
+- Kiểm thử không gửi email thật: `python -m unittest discover -s tests -p test_mail_alert.py -v`.
+
+## Xuất báo cáo PDF
+
+Trang Upload và Webcam tải trực tiếp file `.pdf` qua `/reports/pdf`, không cần in từ HTML. Backend dùng Matplotlib và font DejaVu Sans hỗ trợ tiếng Việt. Khởi động lại backend sau khi cập nhật source.

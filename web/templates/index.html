@@ -1,50 +1,207 @@
 {% extends "base.html" %}
-{% block title %}Upload · Violence Detection{% endblock %}
+{% block title %}{{ "Phân tích từ link" if link_mode else "Upload" }} · Violence Detection{% endblock %}
 {% block content %}
-<section class="hero dashboard-hero">
-  <h1 data-i18n="upload_h1">Phân tích video thông minh</h1>
-  <p data-i18n="upload_p">Tải video lên để kiểm tra hành vi bạo lực bằng mô hình CNN–LSTM.</p>
-</section>
-<section class="card grid-actions upload-card">
-  <div class="section-heading"><div><h2 data-i18n="section_check_h2">Kiểm tra video</h2><p data-i18n="section_check_p">Chọn tệp MP4, AVI, MOV hoặc kéo thả vào khung bên dưới.</p></div><span class="status-dot" data-i18n="status_ready">Sẵn sàng</span></div>
-  <label class="pick drop-zone" for="videoInput">
-    <span class="upload-icon">↑</span>
-    <span><b data-i18n="choose_video_title">Chọn video</b><small data-i18n="choose_video_hint">Nhấn để duyệt tệp từ máy tính</small></span>
-    <input id="videoInput" type="file" accept="video/*"/>
-  </label>
-  <div id="fileMeta" class="file-meta" hidden></div>
-  <video id="videoPreview" class="preview" controls playsinline></video>
-  <div class="btn-row">
-    <button id="btnDetect" type="button" data-i18n="btn_detect">Phát hiện bạo lực</button>
-    <button id="btnReset" class="secondary" type="button" data-i18n="btn_reset">Làm mới</button>
+<div class="dash">
+  <div class="dash-col">
+    <section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title"><svg class="ico-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/></svg>{% if link_mode %}<span>PHÂN TÍCH VIDEO TỪ LINK</span>{% else %}<span data-i18n="up_panel_title">PHÂN TÍCH VIDEO</span>{% endif %}</h2>
+        <span class="online" id="upState"><i class="dot" id="upStateDot"></i><span id="upStateText" data-i18n="up_state_empty">Chưa chọn video</span></span>
+      </div>
+
+      <div {% if not link_mode %}hidden{% endif %}>
+      <form id="urlForm" style="padding: 18px; display: grid; gap: 12px">
+        <label for="videoUrl">Đường link video</label>
+        <input id="videoUrl" type="url" required placeholder="Dán link TikTok, Facebook hoặc link video…" style="width:100%;box-sizing:border-box;padding:12px;border-radius:8px" aria-describedby="urlHelp">
+        <small id="urlHelp" class="muted">Link TikTok, Facebook hoặc link video trực tiếp công khai · tối đa 200 MB. Kết quả, video và các đoạn bạo lực hiển thị trên trang này.</small>
+        <button id="btnUrlDetect" type="submit">Phân tích từ link</button>
+        <div id="urlStatus" class="result muted" role="status" aria-live="polite"></div>
+      </form>
+      </div>
+
+      <div class="cam-controls up-controls" {% if link_mode %}hidden style="display:none"{% endif %}>
+        <div class="group">
+          <button id="btnDetect" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
+            <span data-i18n="btn_detect">Phát hiện bạo lực</span>
+          </button>
+          <button id="btnExportReport" class="secondary" type="button" disabled>
+            <span data-i18n="btn_export_report">Xuất báo cáo</span>
+          </button>
+          <button id="btnNewVideo" class="secondary" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></svg>
+            <span data-i18n="btn_new_video">Nhập video mới</span>
+          </button>
+          <button id="btnReset" class="secondary" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6"/><path d="M4 4v4.6h4.6"/></svg>
+            <span data-i18n="btn_reset">Làm mới</span>
+          </button>
+        </div>
+        <div class="cam-info"><span id="fileMeta" class="result muted" data-i18n="no_file">Chưa có tệp</span></div>
+      </div>
+
+      <input id="videoInput" type="file" accept="video/*"/>
+      <div class="drop-stage" id="dropStage">
+        <label class="drop-inner" id="dropInner" {% if not link_mode %}for="videoInput"{% endif %}>
+          <span class="drop-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></svg></span>
+          <b {% if not link_mode %}data-i18n="choose_video_title"{% endif %}>{% if link_mode %}Nhập link để phân tích video{% else %}Kéo thả video vào đây{% endif %}</b>
+          {% if link_mode %}<span>Video kết quả sẽ xuất hiện tại đây</span>{% else %}<span data-i18n="choose_video_hint">hoặc nhấn để chọn tệp từ máy tính</span>{% endif %}
+          <small data-i18n="choose_video_formats">MP4 · AVI · MOV · MKV · WEBM</small>
+        </label>
+        <video id="videoPreview" class="stage-video" controls playsinline hidden></video>
+        <div id="alertBox" class="alert cam-alert" data-i18n="alert_violence">⚠ CẢNH BÁO BẠO LỰC ĐÃ PHÁT HIỆN</div>
+        <div class="busy" id="busyOverlay" hidden><span class="spinner"></span><span data-i18n="detecting">Đang nhận diện và gán nhãn video...</span></div>
+      </div>
+
+
+      <div id="timeline" class="timeline" hidden></div>
+    </section>
+
+    <section class="panel" id="attnPanel" hidden>
+      <div class="panel-head">
+        <h2 class="panel-title"><svg class="ico-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span data-i18n="attention_label">Attention (frame quyết định)</span></h2>
+      </div>
+      <div id="attn" class="attn"></div>
+    </section>
   </div>
-  <div id="alertBox" class="alert" data-i18n="alert_violence">⚠ CẢNH BÁO BẠO LỰC ĐÃ PHÁT HIỆN</div>
-  <div id="result" class="result muted" data-i18n="no_result_yet">Chưa có kết quả</div>
-  <div id="timeline" class="timeline" hidden></div>
-  <div id="attn" class="attn"></div>
-  <div id="resultActions" class="result-actions" hidden></div>
-</section>
+
+  <div class="dash-col">
+    <section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title"><svg class="ico-danger ico-bolt" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg><span data-i18n="up_result_title">KẾT QUẢ PHÂN TÍCH</span></h2>
+      </div>
+      <div class="verdict" id="verdict">
+        <div class="verdict-ring" id="verdictRing" style="--p: 0">
+          <div><b id="verdictPct">—</b><small data-i18n="alert_conf">Độ tin cậy</small></div>
+        </div>
+        <div class="verdict-text">
+          <span class="badge badge-muted" id="verdictBadge" data-i18n="up_waiting">Đang chờ video</span>
+          <div id="result" class="verdict-line muted" data-i18n="no_result_yet">Chưa có kết quả</div>
+        </div>
+      </div>
+      <div class="stats-grid up-stats">
+        <div class="stat">
+          <div class="stat-label"><span class="stat-ico red"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a7 7 0 00-7 7v5l-1.5 2h17L19 16v-5a7 7 0 00-7-7z"/><path d="M10 20a2 2 0 004 0z"/></svg></span><span data-i18n="up_segments">Đoạn bạo lực</span></div>
+          <div class="stat-value red" id="upSegments">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label"><span class="stat-ico blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><span data-i18n="up_violent_time">Thời gian bạo lực</span></div>
+          <div class="stat-value" id="upViolentTime">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label"><span class="stat-ico green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span><span data-i18n="up_history_id">Mã lịch sử</span></div>
+          <div class="stat-value green" id="upHistory">—</div>
+        </div>
+      </div>
+      <div id="resultActions" class="alert-actions" hidden></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title"><svg class="ico-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z"/><path d="M14 3v6h6"/></svg><span data-i18n="up_info_title">THÔNG TIN VIDEO</span></h2>
+      </div>
+      <table class="mini kv">
+        <tbody>
+          <tr><td data-i18n="up_name">Tên tệp</td><td id="infoName">—</td></tr>
+          <tr><td data-i18n="up_size">Dung lượng</td><td id="infoSize">—</td></tr>
+          <tr><td data-i18n="up_duration">Thời lượng</td><td id="infoDuration">—</td></tr>
+          <tr><td data-i18n="up_resolution">Độ phân giải</td><td id="infoRes">—</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title"><svg class="ico-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.01"/></svg><span data-i18n="up_steps_title">CÁCH SỬ DỤNG</span></h2>
+      </div>
+      <ol class="steps">
+        <li><span>1</span><div><b data-i18n="up_step1_t">Chọn video</b><small data-i18n="up_step1_d">Kéo thả hoặc nhấn vào khung video</small></div></li>
+        <li><span>2</span><div><b data-i18n="up_step2_t">Phát hiện bạo lực</b><small data-i18n="up_step2_d">Model chấm từng cửa sổ 16 khung hình</small></div></li>
+        <li><span>3</span><div><b data-i18n="up_step3_t">Xem lại kết quả</b><small data-i18n="up_step3_d">Nhấn đoạn trên biểu đồ để tua tới đó</small></div></li>
+      </ol>
+    </section>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script>
 (() => {
+  const urlForm = document.getElementById("urlForm");
+  const urlInput = document.getElementById("videoUrl");
+  const urlBtn = document.getElementById("btnUrlDetect");
+  const urlStatus = document.getElementById("urlStatus");
   const input = document.getElementById("videoInput");
   const preview = document.getElementById("videoPreview");
   const btn = document.getElementById("btnDetect");
   const result = document.getElementById("result");
   const alertBox = document.getElementById("alertBox");
   const attn = document.getElementById("attn");
+  const attnPanel = document.getElementById("attnPanel");
   const fileMeta = document.getElementById("fileMeta");
   const resetBtn = document.getElementById("btnReset");
+  const newVideoBtn = document.getElementById("btnNewVideo");
   const resultActions = document.getElementById("resultActions");
   const timeline = document.getElementById("timeline");
+  const dropStage = document.getElementById("dropStage");
+  const dropInner = document.getElementById("dropInner");
+  const busyOverlay = document.getElementById("busyOverlay");
+  const upState = document.getElementById("upState");
+  const upStateDot = document.getElementById("upStateDot");
+  const upStateText = document.getElementById("upStateText");
+  const verdictRing = document.getElementById("verdictRing");
+  const verdictPct = document.getElementById("verdictPct");
+  const verdictBadge = document.getElementById("verdictBadge");
+  const upSegments = document.getElementById("upSegments");
+  const upViolentTime = document.getElementById("upViolentTime");
+  const upHistory = document.getElementById("upHistory");
+  const info = {
+    name: document.getElementById("infoName"), size: document.getElementById("infoSize"),
+    duration: document.getElementById("infoDuration"), res: document.getElementById("infoRes"),
+  };
   const t = (key) => (window.VD ? window.VD.t(key) : key);
   let objectUrl = null;
+  let reportData = null;
+  // Same cap as MAX_UPLOAD_SECONDS in src/api.py; the server enforces it too.
+  const MAX_UPLOAD_SECONDS = 20 * 60;
+  let tooLong = false;
+  const tooLongMessage = "Video dài hơn 20 phút. Vui lòng chọn video tối đa 20 phút.";
+  const exportReportBtn = document.getElementById("btnExportReport");
 
   const fmtTime = (s) => {
     const m = Math.floor(s / 60);
     return `${m}:${(s - m * 60).toFixed(1).padStart(4, "0")}`;
   };
+  function setKey(el, key) { el.dataset.i18n = key; el.textContent = t(key); }
+
+  // state: empty | ready | busy | violence | ok
+  function setState(state) {
+    const map = {
+      empty: ["", "dot", "up_state_empty"], ready: ["on", "dot ok", "up_state_ready"],
+      busy: ["on", "dot primary pulse", "up_state_busy"], violence: ["bad", "dot bad", "pred_violence"],
+      ok: ["on", "dot ok", "pred_nonviolence"],
+    }[state];
+    upState.className = `online ${map[0]}`;
+    upStateDot.className = map[1];
+    setKey(upStateText, map[2]);
+    busyOverlay.hidden = state !== "busy";
+    newVideoBtn.disabled = state === "busy";
+    resetBtn.disabled = state === "busy";
+    input.disabled = state === "busy";
+    btn.disabled = state === "busy";
+    urlBtn.disabled = state === "busy";
+    urlInput.disabled = state === "busy";
+  }
+
+  function resetVerdict() {
+    verdictRing.style.setProperty("--p", 0);
+    verdictRing.className = "verdict-ring";
+    verdictPct.textContent = "—";
+    verdictBadge.className = "badge badge-muted";
+    setKey(verdictBadge, "up_waiting");
+    upSegments.textContent = "—";
+    upViolentTime.textContent = "—";
+    upHistory.textContent = "—";
+  }
 
   // Violence probability per sliding window, threshold line, and the
   // detected segments shaded. Clicking a segment seeks the preview there.
@@ -63,18 +220,18 @@
     ).join("");
     const thr = y(j.threshold ?? 0.5);
     const list = segments.length
-      ? segments.map((s, i) =>
-          `<li><button type="button" class="tl-seg" data-t="${s.start_s}">${fmtTime(s.start_s)} – ${fmtTime(s.end_s)}</button>` +
-          `<span class="muted">${t("segment_prob")}${(s.prob_max * 100).toFixed(1)}%</span></li>`
+      ? segments.map((s) =>
+          `<li><button type="button" class="tl-seg" data-t="${s.start_s}">${fmtTime(s.start_s)} – ${fmtTime(s.end_s)}` +
+          ` · ${Math.round(s.prob_max * 100)}%</button></li>`
         ).join("")
       : `<li class="muted">${t("no_segments")}</li>`;
     timeline.innerHTML =
-      `<p class="muted">${t("timeline_label")}</p>` +
+      `<p class="muted tl-title">${t("timeline_label")}</p>` +
       `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${t("timeline_label")}">` +
       `${bands}<line class="tl-thr" x1="${pad}" x2="${W - pad}" y1="${thr}" y2="${thr}"/>` +
       `<polyline class="tl-line" points="${points}"/></svg>` +
       `<div class="tl-axis muted"><span>0:00.0</span><span>${fmtTime(duration)}</span></div>` +
-      `<p class="muted">${t("segments_label")}</p><ul class="tl-list">${list}</ul>`;
+      `<ul class="tl-list">${list}</ul>`;
     timeline.hidden = false;
     timeline.querySelectorAll(".tl-seg").forEach((b) => b.addEventListener("click", () => {
       preview.currentTime = Number(b.dataset.t);
@@ -82,70 +239,240 @@
     }));
   }
 
-  input.addEventListener("change", () => {
-    const file = input.files[0];
+  function showPreview(src) {
+    preview.src = src;
+    preview.load();
+    preview.hidden = false;
+    dropInner.hidden = true;
+    dropStage.classList.add("has-video");
+  }
+
+  function clearResult() {
+    reportData = null;
+    exportReportBtn.disabled = true;
     alertBox.classList.remove("show");
     attn.innerHTML = "";
+    attnPanel.hidden = true;
     resultActions.hidden = true;
+    resultActions.innerHTML = "";
     timeline.hidden = true;
-    if (!file) {
-      preview.style.display = "none";
-      result.textContent = t("no_result_yet");
-      result.className = "result muted";
-      return;
-    }
+    resetVerdict();
+  }
+
+  function loadFile(file) {
+    clearResult();
+    if (!file) { resetAll(); return; }
+    tooLong = false;
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     objectUrl = URL.createObjectURL(file);
-    preview.src = objectUrl;
-    preview.load();
-    preview.style.display = "block";
-    fileMeta.hidden = false;
-    fileMeta.textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)} MB`;
-    result.textContent = t("ready_to_detect");
-    result.className = "result muted";
+    showPreview(objectUrl);
+    fileMeta.removeAttribute("data-i18n");
+    fileMeta.textContent = file.name;
+    info.name.textContent = file.name;
+    info.size.textContent = `${(file.size / 1024 / 1024).toFixed(1)} MB`;
+    info.duration.textContent = "…";
+    info.res.textContent = "…";
+    setKey(result, "ready_to_detect");
+    result.className = "verdict-line muted";
+    setState("ready");
+  }
+
+  preview.addEventListener("loadedmetadata", () => {
+    if (Number.isFinite(preview.duration)) info.duration.textContent = fmtTime(preview.duration);
+    // Only the user's own file; the labelled result video is never over the cap.
+    if (preview.src === objectUrl && Number.isFinite(preview.duration) && preview.duration > MAX_UPLOAD_SECONDS) {
+      tooLong = true;
+      result.removeAttribute("data-i18n");
+      result.textContent = tooLongMessage;
+      result.className = "verdict-line violence";
+      btn.disabled = true;
+    }
+    if (preview.videoWidth) info.res.textContent = `${preview.videoWidth} × ${preview.videoHeight}`;
   });
 
-  btn.addEventListener("click", async () => {
+  input.addEventListener("change", () => loadFile(input.files[0]));
+
+  ["dragenter", "dragover"].forEach((ev) => dropStage.addEventListener(ev, (e) => {
+    e.preventDefault();
+    dropStage.classList.add("dragging");
+  }));
+  ["dragleave", "drop"].forEach((ev) => dropStage.addEventListener(ev, (e) => {
+    e.preventDefault();
+    dropStage.classList.remove("dragging");
+  }));
+  dropStage.addEventListener("drop", (e) => {
+    const file = [...(e.dataTransfer?.files || [])].find((f) => f.type.startsWith("video/") || /\.(mp4|avi|mov|mkv|webm|mpe?g|wmv)$/i.test(f.name));
+    if (!file || input.disabled) return;
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    input.files = dt.files;
+    loadFile(file);
+  });
+
+  async function analyze(fromUrl = false) {
     const file = input.files[0];
-    if (!file) { alert(t("choose_video_first")); return; }
+    if (!fromUrl && !file) { input.click(); return; }
+    if (!fromUrl && tooLong) {
+      result.removeAttribute("data-i18n");
+      result.textContent = tooLongMessage;
+      result.className = "verdict-line violence";
+      return;
+    }
+    if (fromUrl) {
+      resetAll();
+      urlStatus.textContent = "Đang lấy video từ link và phân tích…";
+      info.name.textContent = "Video từ link";
+      info.size.textContent = "…";
+    }
     btn.disabled = true;
-    result.textContent = t("detecting");
-    result.className = "result muted";
-    alertBox.classList.remove("show");
-    attn.innerHTML = "";
-    timeline.hidden = true;
+    clearResult();
+    setKey(result, "detecting");
+    result.className = "verdict-line muted";
+    setState("busy");
     const fd = new FormData();
-    fd.append("file", file);
+    if (fromUrl) fd.append("url", urlInput.value.trim());
+    else fd.append("file", file);
     fd.append("source", "upload");
     try {
-      const r = await fetch("/predict", { method: "POST", body: fd });
+      const r = await fetch(fromUrl ? "/predict/url" : "/predict", { method: "POST", body: fd });
       const j = await r.json();
       if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail || j));
-      const pct = (j.confidence * 100).toFixed(1);
+      reportData = { ...j, originalName: fromUrl ? j.original_name : file.name, sizeBytes: fromUrl ? j.size_bytes : file.size };
+      if (fromUrl) {
+        info.name.textContent = j.original_name;
+        info.size.textContent = `${(j.size_bytes / 1024 / 1024).toFixed(1)} MB`;
+        info.duration.textContent = fmtTime(j.duration_s || 0);
+        urlStatus.textContent = "Đã phân tích xong.";
+      }
+      exportReportBtn.disabled = false;
+      const pct = j.confidence * 100;
       const bad = j.pred_class === "violence";
-      const predLabel = bad ? t("pred_violence") : t("pred_nonviolence");
-      result.innerHTML = `${t("result_label")}<span class="${bad ? "violence" : "ok"}">${predLabel}</span><br/>${t("confidence_label")}${pct}%<br/><span class="muted">${t("saved_history_prefix")}${j.history_id} · ${j.created_at || ""}</span>`;
-      result.className = "result";
+      verdictRing.style.setProperty("--p", pct.toFixed(1));
+      verdictRing.className = `verdict-ring ${bad ? "bad" : "good"}`;
+      verdictPct.textContent = `${pct.toFixed(0)}%`;
+      verdictBadge.className = `badge ${bad ? "badge-danger" : "badge-ok"}`;
+      setKey(verdictBadge, bad ? "pred_violence" : "pred_nonviolence");
+      result.removeAttribute("data-i18n");
+      result.innerHTML = `<span class="${bad ? "violence" : "ok"}">${t(bad ? "up_verdict_bad" : "up_verdict_ok")}</span>`
+        + `<small>${t("saved_history_prefix")}${j.history_id} · ${String(j.created_at || "").replace("T", " ")}</small>`;
+      if (j.mail_alert && !j.mail_alert.skipped) {
+        const mailStatus = document.createElement("small");
+        mailStatus.textContent = t(j.mail_alert.sent ? "mail_sent" : "mail_failed");
+        result.appendChild(mailStatus);
+      }
+      result.className = "verdict-line";
+      const segs = j.segments || [];
+      upSegments.textContent = String(segs.length);
+      upViolentTime.textContent = segs.length ? `${segs.reduce((s, x) => s + Math.max(0, x.end_s - x.start_s), 0).toFixed(1)}s` : "0s";
+      upHistory.textContent = j.history_id != null ? `#${String(j.history_id).padStart(3, "0")}` : "—";
+      setState(bad ? "violence" : "ok");
       if (bad) alertBox.classList.add("show");
+      // Play the labelled video in place of the original; the timeline's
+      // segment buttons keep seeking the same element.
+      if ((j.annotated || fromUrl) && j.video_url) {
+        showPreview(j.video_url);
+        fileMeta.dataset.i18n = "annotated_note";
+        fileMeta.textContent = t("annotated_note");
+      }
       renderTimeline(j);
       if (j.attention_url) {
-        attn.innerHTML = `<p class="muted">${t("attention_label")}</p><img src="${j.attention_url}" alt="attention"/>`;
+        attnPanel.hidden = false;
+        attn.innerHTML = `<img src="${j.attention_url}" alt="attention"/>`;
       }
       if (j.video_url) {
         resultActions.hidden = false;
-        resultActions.innerHTML = `<a class="btn secondary" href="${j.video_url}" target="_blank">${t("view_saved_video")}</a><a class="btn" href="${j.video_url}" download>${t("download_result")}</a>`;
+        resultActions.innerHTML = `<a class="btn secondary" href="${j.video_url}" target="_blank" rel="noopener">${t("view_saved_video")}</a><a class="btn" href="${j.video_url}" download>${t("download_result")}</a>`;
       }
     } catch (e) {
+      result.removeAttribute("data-i18n");
       result.textContent = t("error_label") + e.message;
-      result.className = "result violence";
+      if (fromUrl) urlStatus.textContent = e.message;
+      result.className = "verdict-line violence";
+      setState("ready");
     } finally {
       btn.disabled = false;
+      busyOverlay.hidden = true;
     }
+  }
+  btn.addEventListener("click", () => analyze(false));
+  urlForm.addEventListener("submit", (e) => { e.preventDefault(); if (!urlBtn.disabled) analyze(true); });
+
+  const escapeReport = (value) => String(value ?? "—").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[ch]));
+
+  exportReportBtn.addEventListener("click", async () => {
+    if (!reportData) return;
+    const j = reportData;
+    const segments = j.segments || [];
+    const rows = segments.map((s, i) => '<tr><td>' + (i + 1) + '</td><td>' + escapeReport(fmtTime(s.start_s))
+      + '</td><td>' + escapeReport(fmtTime(s.end_s)) + '</td><td>'
+      + escapeReport((100 * s.prob_max).toFixed(1)) + '%</td></tr>').join("");
+    const fields = [
+      ["Tên video", j.originalName],
+      ["Dung lượng", (j.sizeBytes / 1024 / 1024).toFixed(1) + " MB"],
+      ["Thời lượng", j.duration_s != null ? fmtTime(j.duration_s) : "—"],
+      ["Thời gian phân tích", j.created_at || "—"],
+      ["Mã lịch sử", j.history_id != null ? "#" + j.history_id : "—"],
+      ["Kết quả toàn video", j.pred_class === "violence" ? "Bạo lực" : "Không bạo lực"],
+      ["Tỷ lệ cửa sổ thuộc lớp kết quả", (j.confidence * 100).toFixed(1) + "%"],
+      ["Ngưỡng phân loại cửa sổ", j.threshold],
+      ["Số cửa sổ phân tích", j.n_clips],
+      ["Số đoạn bạo lực", segments.length],
+    ];
+    const body = fields.map(([label, value]) => '<tr><th>' + escapeReport(label) + '</th><td>' + escapeReport(value) + '</td></tr>').join("");
+    const report = '<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+      + '<title>Báo cáo phân tích video</title><style>body{font:16px Arial,sans-serif;color:#172033;max-width:900px;margin:40px auto;padding:0 24px}h1{font-size:26px}h2{font-size:20px;margin-top:28px}table{width:100%;border-collapse:collapse;margin:16px 0}th,td{border:1px solid #cbd5e1;padding:10px;text-align:left;overflow-wrap:anywhere}th{background:#f1f5f9}p{line-height:1.6}button{padding:10px 18px;cursor:pointer}@media print{button{display:none}body{margin:0;max-width:none}tr{break-inside:avoid}}</style></head><body>'
+      + '<button type="button" onclick="window.print()">In / Lưu PDF</button><h1>BÁO CÁO PHÂN TÍCH VIDEO</h1>'
+      + '<p>Xuất lúc: ' + escapeReport(new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })) + ' (giờ Việt Nam)</p>'
+      + '<table><tbody>' + body + '</tbody></table><h2>Các đoạn được phát hiện bạo lực</h2>'
+      + (segments.length ? '<table><thead><tr><th>STT</th><th>Bắt đầu</th><th>Kết thúc</th><th>Xác suất cao nhất</th></tr></thead><tbody>' + rows + '</tbody></table>' : '<p>Không phát hiện đoạn bạo lực trong các cửa sổ đã phân tích.</p>')
+      + '<p>Kết quả toàn video dựa trên lớp chiếm đa số cửa sổ. Video được phân loại không bạo lực vẫn có thể chứa đoạn được phát hiện bạo lực. Tỷ lệ cửa sổ không phải xác suất của toàn video; thời điểm các đoạn là ước lượng từ cửa sổ phân tích.</p>'
+      + '</body></html>';
+    exportReportBtn.disabled = true;
+    let pdfBlob;
+    try {
+      const form = new FormData();
+      form.append("report", report);
+      const response = await fetch("/reports/pdf", { method: "POST", body: form });
+      if (!response.ok) throw new Error("Không tạo được PDF. Vui lòng thử lại.");
+      pdfBlob = await response.blob();
+    } catch (error) {
+      window.alert(error.message);
+      return;
+    } finally {
+      exportReportBtn.disabled = false;
+    }
+    const url = URL.createObjectURL(pdfBlob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "bao-cao-" + (j.originalName.replace(/\.[^.]+$/, "").replace(/[^\p{L}\p{N}_-]/gu, "_") || "video") + "-" + (j.history_id ?? Date.now()) + ".pdf";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
-  resetBtn.addEventListener("click", () => {
-    input.value = ""; preview.removeAttribute("src"); preview.style.display = "none";
-    fileMeta.hidden = true; alertBox.classList.remove("show"); attn.innerHTML = ""; resultActions.hidden = true; timeline.hidden = true;
-    result.textContent = t("no_result_yet"); result.className = "result muted";
+
+  function resetAll() {
+    if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
+    input.value = "";
+    preview.pause();
+    preview.removeAttribute("src");
+    preview.load();
+    preview.hidden = true;
+    dropInner.hidden = false;
+    dropStage.classList.remove("has-video");
+    clearResult();
+    setKey(fileMeta, "no_file");
+    Object.values(info).forEach((el) => { el.textContent = "—"; });
+    setKey(result, "no_result_yet");
+    result.className = "verdict-line muted";
+    setState("empty");
+  }
+  resetBtn.addEventListener("click", resetAll);
+  newVideoBtn.addEventListener("click", () => {
+    resetAll();
+    input.click();
   });
 })();
 </script>

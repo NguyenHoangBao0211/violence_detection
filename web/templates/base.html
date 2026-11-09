@@ -14,28 +14,78 @@
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="/static/css/app.css?v=6"/>
-  <script src="/static/js/ui.js?v=2" defer></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600;700&display=swap"/>
+  <link rel="stylesheet" href="/static/css/app.css?v={{ asset_v('css/app.css') }}"/>
+  <script src="/static/js/ui.js?v={{ asset_v('js/ui.js') }}" defer></script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="topbar-inner">
-      <a class="brand" href="/">VD Monitor <span>CNN–LSTM</span></a>
-      <nav class="nav">
-        <a href="/" class="{% if active == 'upload' %}active{% endif %}" data-i18n="nav_upload">Tải lên</a>
-        <a href="/live" class="{% if active == 'live' %}active{% endif %}" data-i18n="nav_camera">Camera</a>
-        <a href="/history" class="{% if active == 'history' %}active{% endif %}" data-i18n="nav_history">Lịch sử</a>
-      </nav>
-      <div class="topbar-actions">
-        <button id="themeToggleBtn" class="icon-btn" type="button" title="Đổi giao diện sáng/tối">Tối</button>
-        <button id="langToggleBtn" class="icon-btn" type="button" title="Switch language / Đổi ngôn ngữ">EN</button>
+  <div class="app">
+    <header class="appbar">
+      <a class="brand" href="/live">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32">
+            <path d="M16 3l10 4v8c0 6.4-4.2 10.9-10 13-5.8-2.1-10-6.6-10-13V7l10-4z" fill="#ffffff" opacity=".14"/>
+            <path d="M16 3l10 4v8c0 6.4-4.2 10.9-10 13-5.8-2.1-10-6.6-10-13V7l10-4z" fill="none" stroke="#9cc0ff" stroke-width="1.6"/>
+            <circle cx="17.5" cy="9.5" r="2.2" fill="#ffd166"/>
+            <path d="M16.6 12.4l-3.4 4.2 3.2 1.6-2 5.3M16.6 12.4l3.6 3.2 2.6-1.4M13.2 16.6l-3 .6" fill="none" stroke="#ffffff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M21.5 19.5l2.6 2.6M24.1 19.5l-2.6 2.6" stroke="#ff6b6b" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <span class="brand-text">
+          <strong>VIOLENCE WARNING SYSTEM</strong>
+          <small>Real-time Video Intelligence &amp; Safety Surveillance</small>
+        </span>
+      </a>
+      <div class="appbar-actions">
+        <span class="chip" id="apiChip"><i class="dot"></i><span id="apiChipText" data-i18n="chip_api_checking">API: Đang kiểm tra</span></span>
+        <span class="chip chip-hide-sm" id="modelChip"><i class="dot"></i><span id="modelChipText" data-i18n="chip_model_checking">Model AI: —</span></span>
+        <span class="chip chip-clock" id="clockChip">--:--:--</span>
+        <a class="chip chip-btn" href="/settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
+          <span data-i18n="nav_settings">Cài đặt</span>
+        </a>
       </div>
-    </div>
-  </header>
-  <main class="wrap">
-    {% block content %}{% endblock %}
-    <p class="footer" data-i18n="footer_text">Phát hiện bạo lực trong video · PyTorch CNN–LSTM · localhost demo</p>
-  </main>
+    </header>
+
+    <aside class="sidebar">
+      <nav class="side-nav">
+        <a href="/live" class="{% if active == 'live' %}active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.2l9 7.2V20a1 1 0 01-1 1h-5.5v-6h-5v6H4a1 1 0 01-1-1v-9.6l9-7.2z"/></svg>
+          <span data-i18n="nav_overview">Tổng quan</span>
+        </a>
+        <a href="/" class="{% if active == 'upload' %}active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/><path d="M8.5 10v4l3-2z" fill="currentColor"/></svg>
+          <span data-i18n="nav_upload">Phân tích video</span>
+        </a>
+        <a href="/video-link" class="{% if active == 'video_link' %}active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 007 0l3-3a5 5 0 00-7-7l-2 2M14 11a5 5 0 00-7 0l-3 3a5 5 0 007 7l2-2"/></svg>
+          <span>Phân tích từ link</span>
+        </a>
+        <a href="/history" class="{% if active == 'history' %}active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          <span data-i18n="nav_history">Lịch sử cảnh báo</span>
+        </a>
+        <a href="/stats" class="{% if active == 'stats' %}active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20h16"/><path d="M7 16v-4M11 16V8M15 16v-6M19 16V5"/></svg>
+          <span data-i18n="nav_stats">Thống kê</span>
+        </a>
+        <a href="/settings" class="{% if active == 'settings' %}active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
+          <span data-i18n="nav_settings">Cài đặt</span>
+        </a>
+      </nav>
+      <div class="side-foot">
+        <span class="side-status"><i class="dot" id="sideDot"></i><span id="sideStatusText" data-i18n="system_checking">Đang kiểm tra hệ thống</span></span>
+        <small><span data-i18n="version_label">Phiên bản</span> {{ app_version }}</small>
+      </div>
+    </aside>
+
+    <main class="main">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
   {% block scripts %}{% endblock %}
 </body>
 </html>

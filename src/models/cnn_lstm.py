@@ -174,26 +174,50 @@ def _pool(z: torch.Tensor, attention: TemporalAttention | None) -> tuple[torch.T
     return attention(z)
 
 
+def spatial_backbone(name: str, pretrained: bool = False) -> tuple[nn.Sequential, int]:
+    """Per-frame CNN ending in a pooled feature vector, and its size.
+
+    Same layout as the training notebook, so checkpoint keys match:
+    ResNet50 = children up to avgpool (cnn.0 ... cnn.8);
+    MobileNetV2 = features + global average pool (cnn.0.*, cnn.1).
+    """
+    if name == "mobilenet_v2":
+        net = mobilenet_v2(weights=MobileNet_V2_Weights.DEFAULT if pretrained else None)
+        return nn.Sequential(net.features, nn.AdaptiveAvgPool2d(1)), 1280
+    if name != "resnet50":
+        raise ValueError(f"Unknown backbone: {name}")
+    net = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2 if pretrained else None)
+    return nn.Sequential(*list(net.children())[:-1]), 2048
+
+
 class ResNet50BiLSTMAttention(nn.Module):
     """Model exported by the training notebook.
 
     `model.bidirectional` and `model.use_attention` switch the ablation
     variants (LSTM vs BiLSTM, attention vs mean pooling) with the same keys.
+    `model.temporal = "none"` drops the LSTM: the spatial-only baseline that
+    averages the per-frame CNN features.
+    `model.backbone = "mobilenet_v2"` swaps ResNet50 (2048-d) for MobileNetV2
+    (1280-d, about 13x fewer FLOPs per frame): the real-time webcam variant.
+    The class keeps its name so existing checkpoints and imports still work.
     """
 
     def __init__(self, cfg: dict):
         super().__init__()
-        net = resnet50(weights=None)
-        self.cnn = nn.Sequential(*list(net.children())[:-1])
         m = cfg.get("model", {})
-        self.lstm, out_dim = _lstm_from_cfg(2048, m)
+        self.cnn, self.feat_dim = spatial_backbone(m.get("backbone", "resnet50"))
+        if m.get("temporal", "lstm") == "none":
+            self.lstm, out_dim = None, self.feat_dim
+        else:
+            self.lstm, out_dim = _lstm_from_cfg(self.feat_dim, m)
         self.attention = TemporalAttention(out_dim) if m.get("use_attention", True) else None
         self.head = nn.Sequential(nn.Dropout(m.get("dropout", 0.5)), nn.Linear(out_dim, 2))
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
         b, t, c, h, w = x.shape
-        z = self.cnn(x.reshape(b * t, c, h, w)).flatten(1)
-        z, _ = self.lstm(z.view(b, t, 2048))
+        z = self.cnn(x.reshape(b * t, c, h, w)).flatten(1).view(b, t, self.feat_dim)
+        if self.lstm is not None:
+            z, _ = self.lstm(z)
         context, alpha = _pool(z, self.attention)
         return self.head(context), alpha
 

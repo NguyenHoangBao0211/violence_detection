@@ -4,6 +4,13 @@ Each clip is downscaled like the browser frames, split into 16-frame windows
 (stride 8) and scored with run_inference_frames (YOLO person crop + one model
 pass). The clip probability is the mean over windows.
 
+Event level (how the camera behaves): an alarm is a run of at least
+--min-streak windows at or above the threshold, as the upload scorer counts
+violent streaks. Reported: share of violent clips with an alarm, alarms per
+hour of non-violent video, and seconds from violence onset to the alarm.
+Onsets come from <data>/onsets.csv (columns file,onset_s); without it a
+violent clip counts as violent from its first frame.
+
   python -m src.eval_webcam --checkpoint checkpoints/best2.pt checkpoints/best_webcam.pt
 """
 
@@ -42,13 +49,54 @@ def read_frames(path, max_side: int = 640, jpeg_quality: int = 90) -> list[np.nd
     return frames
 
 
-def clip_prob(model, cfg, device, frames, crop: bool, window: int = 16, stride: int = 8) -> float:
+def video_fps(path) -> float:
+    cap = cv2.VideoCapture(str(path))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+    return fps if fps and fps > 0 else 30.0
+
+
+def window_probs(model, cfg, device, frames, crop: bool, window: int = 16, stride: int = 8) -> np.ndarray:
     starts = list(range(0, max(1, len(frames) - window + 1), stride))
-    probs = [
+    return np.array([
         run_inference_frames(model, cfg, device, frames[s:s + window], with_boxes=crop)["violence_prob_mean"]
         for s in starts
-    ]
-    return float(np.mean(probs))
+    ])
+
+
+def alarm_times(probs: np.ndarray, thr: float, min_streak: int, fps: float,
+                window: int = 16, stride: int = 8) -> list[float]:
+    """Second at which each alarm fires: the end of the window that completes the streak."""
+    times, run = [], 0
+    for i, hit in enumerate(probs >= thr):
+        run = run + 1 if hit else 0
+        if run == min_streak:
+            times.append((i * stride + window) / fps)
+    return times
+
+
+def event_report(clips, probs, fps, n_frames, thr: float, min_streak: int, onsets: dict) -> dict:
+    violent_alarms, delays, false_alarms, calm_seconds = 0, [], 0, 0.0
+    for (path, label), pr, f, n in zip(clips, probs, fps, n_frames):
+        times = alarm_times(pr, thr, min_streak, f)
+        if label == 1:
+            onset = onsets.get(path.name, 0.0)
+            after = [t for t in times if t >= onset]
+            if after:
+                violent_alarms += 1
+                delays.append(after[0] - onset)
+        else:
+            false_alarms += len(times)
+            calm_seconds += n / f
+    n_violent = sum(lbl for _, lbl in clips)
+    return {
+        "min_streak": min_streak,
+        "event_recall": round(violent_alarms / n_violent, 4) if n_violent else None,
+        "false_alarms_per_hour": round(false_alarms / (calm_seconds / 3600), 2) if calm_seconds else None,
+        "false_alarms": false_alarms,
+        "non_violent_minutes": round(calm_seconds / 60, 1),
+        "median_delay_s": round(float(np.median(delays)), 2) if delays else None,
+    }
 
 
 def report(y: np.ndarray, probs: np.ndarray, thr: float) -> dict:
@@ -75,6 +123,7 @@ def main() -> None:
     parser.add_argument("--threshold", type=float, default=None, help="default: the checkpoint's threshold")
     parser.add_argument("--no-crop", action="store_true", help="classify full frames instead of YOLO crops")
     parser.add_argument("--jpeg", type=int, default=90, help="JPEG quality like the Camera page; 0 = off")
+    parser.add_argument("--min-streak", type=int, default=3, help="windows in a row that raise an alarm")
     parser.add_argument("--out", default="reports/outputs/eval_webcam.json")
     args = parser.parse_args()
 
@@ -84,17 +133,27 @@ def main() -> None:
     y = np.array([label for _, label in clips])
     print(f"{len(clips)} clip ({int(y.sum())} bạo lực, {int(len(y) - y.sum())} không bạo lực), split={args.split}")
     frames = [read_frames(p, jpeg_quality=args.jpeg) for p, _ in clips]
+    fps = [video_fps(p) for p, _ in clips]
+    onsets_csv = root / args.data / "onsets.csv"
+    onsets = {}
+    if onsets_csv.is_file():
+        import pandas as pd
+        onsets = dict(pd.read_csv(onsets_csv).set_index("file")["onset_s"].astype(float))
 
     results = {}
     for ckpt in args.checkpoint:
         model, cfg, device = load_detector(root / ckpt, load_config(root / "configs/default.yaml"))
-        probs = np.array([clip_prob(model, cfg, device, f, crop=not args.no_crop) for f in frames])
+        windows = [window_probs(model, cfg, device, f, crop=not args.no_crop) for f in frames]
+        probs = np.array([w.mean() for w in windows])
         thr = args.threshold if args.threshold is not None else float(cfg["infer"].get("threshold", 0.6))
         sweep = {f"{t:.2f}": report(y, probs, float(t))["f1_macro"] for t in np.arange(0.3, 0.91, 0.05)}
         wrong = [f"{p.parent.name}/{p.name} p={pr:.2f}" for (p, lbl), pr in zip(clips, probs) if int(pr >= thr) != lbl]
-        results[ckpt] = {"at_threshold": report(y, probs, thr), "f1_by_threshold": sweep, "misclassified": wrong}
+        events = event_report(clips, windows, fps, [len(f) for f in frames], thr, args.min_streak, onsets)
+        results[ckpt] = {"at_threshold": report(y, probs, thr), "events": events,
+                         "f1_by_threshold": sweep, "misclassified": wrong}
         print(f"\n== {ckpt}")
         print(json.dumps(results[ckpt]["at_threshold"], indent=2))
+        print("Su kien:", json.dumps(events, ensure_ascii=False))
         best = max(sweep, key=sweep.get)
         print(f"Ngưỡng tốt nhất trên tập này: {best} (F1={sweep[best]})")
         for w in wrong:

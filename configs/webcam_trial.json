@@ -1,0 +1,6 @@
+{
+  "checkpoint": "final_best.pt",
+  "ensemble": false,
+  "upload_checkpoint": "base_best.pt",
+  "person_detection": true
+}

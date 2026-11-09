@@ -17,3 +17,8 @@ einops>=0.7
 pytorchvideo>=0.1.5
 # MoViNet-A0 second opinion for the webcam (not on PyPI)
 movinet-pytorch @ git+https://github.com/Atze00/MoViNet-pytorch.git
+
+yt-dlp>=2025.1.26
+curl-cffi>=0.7
+transformers>=4.40,<5
+safetensors>=0.4

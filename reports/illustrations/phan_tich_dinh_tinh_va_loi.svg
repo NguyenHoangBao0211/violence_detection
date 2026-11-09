@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Phân tích định tính và lỗi trong hệ thống phát hiện bạo lực</title>
+  <desc id="desc">Sơ đồ quy trình từ video camera và video tải lên, qua hai mô hình của dự án, đến đối chiếu dự đoán và phân loại các nhóm lỗi.</desc>
+  <defs>
+    <style>
+      text { font-family: "Aptos", "Arial", sans-serif; fill: #18324b; }
+      .title { font-size: 38px; font-weight: 700; letter-spacing: .2px; }
+      .subtitle { font-size: 19px; fill: #60758a; }
+      .heading { font-size: 22px; font-weight: 700; }
+      .body { font-size: 17px; }
+      .small { font-size: 15px; fill: #60758a; }
+      .code { font-size: 15px; font-weight: 700; letter-spacing: .6px; }
+      .card { fill: #ffffff; stroke: #d8e3ec; stroke-width: 2; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto">
+      <path d="M1 1 L10 6 L1 11" fill="none" stroke="#7791a7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+  <rect width="1600" height="1000" fill="#f5f8fb"/>
+  <rect x="0" y="0" width="1600" height="12" fill="#167d91"/>
+
+  <text x="70" y="78" class="title">PHÂN TÍCH ĐỊNH TÍNH VÀ LỖI</text>
+  <text x="70" y="113" class="subtitle">Quy trình xem xét kết quả của hệ thống phát hiện bạo lực trong video</text>
+
+  <!-- Three process panels -->
+  <rect x="60" y="150" width="365" height="620" rx="22" class="card"/>
+  <rect x="455" y="150" width="390" height="620" rx="22" class="card"/>
+  <rect x="875" y="150" width="665" height="620" rx="22" class="card"/>
+  <text x="90" y="195" class="heading">1. Nguồn video</text>
+  <text x="485" y="195" class="heading">2. Mô hình và dự đoán</text>
+  <text x="905" y="195" class="heading">3. Đối chiếu và mã hóa lỗi</text>
+
+  <!-- Webcam source card -->
+  <rect x="88" y="220" width="310" height="205" rx="16" fill="#eef6f8" stroke="#c7e0e5" stroke-width="2"/>
+  <circle cx="126" cy="260" r="20" fill="#167d91"/>
+  <path d="M117 254h18v13h-18z M114 250h24v4h-24z M121 268l-5 8h22l-5-8" fill="#fff"/>
+  <text x="160" y="267" font-size="20" font-weight="700">Camera / webcam</text>
+  <rect x="110" y="291" width="266" height="75" rx="10" fill="#dbe8ed"/>
+  <path d="M126 350 L175 320 L209 340 L252 309 L286 332 L322 312 L359 350Z" fill="#b5cbd2"/>
+  <circle cx="195" cy="319" r="10" fill="#36576d"/><path d="M195 330v24m0-16-13 12m13-12 13 12m-13 4-10 14m10-14 10 14" stroke="#36576d" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="286" cy="319" r="10" fill="#b65347"/><path d="M286 330v24m0-16-13 12m13-12 13 12m-13 4-10 14m10-14 10 14" stroke="#b65347" stroke-width="5" stroke-linecap="round"/>
+  <text x="110" y="397" class="small">Cửa sổ suy luận: 32 khung hình</text>
+
+  <!-- Upload source card -->
+  <rect x="88" y="448" width="310" height="205" rx="16" fill="#f1f3fa" stroke="#d7dcef" stroke-width="2"/>
+  <circle cx="126" cy="488" r="20" fill="#596ca6"/>
+  <path d="M126 475v18m-8-8 8-8 8 8M115 498v5h22v-5" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="160" y="495" font-size="20" font-weight="700">Video tải lên</text>
+  <rect x="110" y="519" width="266" height="75" rx="10" fill="#e4e7f0"/>
+  <rect x="124" y="534" width="62" height="45" rx="5" fill="#bec8d9"/>
+  <rect x="194" y="534" width="62" height="45" rx="5" fill="#9eacc4"/>
+  <rect x="264" y="534" width="62" height="45" rx="5" fill="#bec8d9"/>
+  <path d="M149 546l15 10-15 10z" fill="#fff"/><path d="M219 546l15 10-15 10z" fill="#fff"/><path d="M289 546l15 10-15 10z" fill="#fff"/>
+  <text x="110" y="625" class="small">16 khung hình • bước trượt cơ sở 8</text>
+  <text x="110" y="701" class="small">Mã mẫu ẩn danh • nhãn thật • thời lượng</text>
+  <text x="110" y="727" class="small">Chỉ dùng khung hình được phép công bố</text>
+
+  <!-- Arrows -->
+  <path d="M405 322 H450" stroke="#7791a7" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M405 550 H450" stroke="#7791a7" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <!-- Model blocks -->
+  <rect x="485" y="230" width="330" height="185" rx="16" fill="#eef6f8" stroke="#c7e0e5" stroke-width="2"/>
+  <text x="510" y="270" class="code" fill="#167d91">CAMERA</text>
+  <text x="510" y="306" font-size="21" font-weight="700">R(2+1)D-18</text>
+  <text x="510" y="338" class="body">Học đặc trưng không gian</text>
+  <text x="510" y="363" class="body">và chuyển động theo thời gian</text>
+  <g transform="translate(716 278)">
+    <rect x="0" y="0" width="20" height="62" rx="4" fill="#79b8c3"/><rect x="27" y="8" width="20" height="46" rx="4" fill="#4197a5"/><rect x="54" y="16" width="20" height="30" rx="4" fill="#167d91"/>
+    <path d="M20 31h7m20 0h7" stroke="#7791a7" stroke-width="2" marker-end="url(#arrow)"/>
+  </g>
+
+  <rect x="485" y="438" width="330" height="185" rx="16" fill="#f1f3fa" stroke="#d7dcef" stroke-width="2"/>
+  <text x="510" y="478" class="code" fill="#596ca6">VIDEO TẢI LÊN</text>
+  <text x="510" y="514" font-size="20" font-weight="700">MobileNetV2</text>
+  <text x="510" y="543" font-size="20" font-weight="700">+ BiLSTM + Attention</text>
+  <text x="510" y="580" class="body">Tổng hợp đặc trưng chuỗi frame</text>
+  <g transform="translate(730 496)">
+    <circle cx="0" cy="16" r="9" fill="#8797ba"/><circle cx="32" cy="16" r="9" fill="#697ca9"/><circle cx="64" cy="16" r="9" fill="#596ca6"/>
+    <path d="M9 16h14m18 0h14" stroke="#596ca6" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M0 43Q32 59 64 43" fill="none" stroke="#a47d35" stroke-width="3"/><circle cx="32" cy="52" r="5" fill="#c4953d"/>
+  </g>
+  <rect x="485" y="663" width="330" height="70" rx="14" fill="#fff7e8" stroke="#f0d9a8" stroke-width="2"/>
+  <text x="510" y="692" class="body" font-weight="700">Điểm bạo lực</text>
+  <text x="510" y="717" class="small">so với ngưỡng của chức năng</text>
+  <path d="M650 701 H787" stroke="#d4b66e" stroke-width="4"/>
+  <path d="M739 687v28" stroke="#c56a4f" stroke-width="4"/>
+  <circle cx="730" cy="701" r="9" fill="#167d91" stroke="#fff" stroke-width="3"/>
+
+  <path d="M830 322 H870" stroke="#7791a7" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M830 530 C855 530 850 365 875 365" fill="none" stroke="#7791a7" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <!-- Evaluation record -->
+  <rect x="905" y="220" width="605" height="125" rx="16" fill="#f8fafc" stroke="#d8e3ec" stroke-width="2"/>
+  <text x="930" y="255" class="code" fill="#167d91">PHIẾU PHÂN TÍCH MẪU</text>
+  <text x="930" y="287" class="body">Mã mẫu: S-0XX</text>
+  <text x="1120" y="287" class="body">Nhãn thật: bạo lực / không bạo lực</text>
+  <text x="930" y="321" class="small">Dự đoán • xác suất • ngưỡng • thời lượng/cửa sổ • nhận xét</text>
+
+  <!-- Nine project-specific error categories -->
+  <g>
+    <rect x="905" y="360" width="190" height="105" rx="13" fill="#fff3ef" stroke="#efd0c7" stroke-width="2"/>
+    <text x="920" y="390" class="code" fill="#a94d3c">FP-MOTION</text>
+    <text x="920" y="420" class="small">Chuyển động mạnh,</text><text x="920" y="441" class="small">không bạo lực</text>
+
+    <rect x="1107" y="360" width="190" height="105" rx="13" fill="#fff3ef" stroke="#efd0c7" stroke-width="2"/>
+    <text x="1122" y="390" class="code" fill="#a94d3c">FN-OCCLUSION</text>
+    <text x="1122" y="420" class="small">Bị che khuất hoặc</text><text x="1122" y="441" class="small">ngoài khung hình</text>
+
+    <rect x="1309" y="360" width="201" height="105" rx="13" fill="#fff8e9" stroke="#efdfb8" stroke-width="2"/>
+    <text x="1324" y="390" class="code" fill="#9a7025">FN-SHORT</text>
+    <text x="1324" y="420" class="small">Sự kiện ngắn hơn</text><text x="1324" y="441" class="small">cửa sổ lấy mẫu</text>
+
+    <rect x="905" y="480" width="190" height="105" rx="13" fill="#f2f5f8" stroke="#d8e3ec" stroke-width="2"/>
+    <text x="920" y="510" class="code" fill="#526b80">LOW-QUALITY</text>
+    <text x="920" y="540" class="small">Tối, rung, mờ</text><text x="920" y="561" class="small">hoặc nén mạnh</text>
+
+    <rect x="1107" y="480" width="190" height="105" rx="13" fill="#eef6f8" stroke="#c7e0e5" stroke-width="2"/>
+    <text x="1122" y="510" class="code" fill="#167d91">SMALL-SUBJECT</text>
+    <text x="1122" y="540" class="small">Đối tượng nhỏ</text><text x="1122" y="561" class="small">hoặc ở xa</text>
+
+    <rect x="1309" y="480" width="201" height="105" rx="13" fill="#f1f3fa" stroke="#d7dcef" stroke-width="2"/>
+    <text x="1324" y="510" class="code" fill="#596ca6">LABEL-WINDOW</text>
+    <text x="1324" y="540" class="small">Nhãn video lệch</text><text x="1324" y="561" class="small">nội dung cửa sổ</text>
+
+    <rect x="905" y="600" width="190" height="105" rx="13" fill="#f1f3fa" stroke="#d7dcef" stroke-width="2"/>
+    <text x="920" y="630" class="code" fill="#596ca6">DOMAIN-GAP</text>
+    <text x="920" y="660" class="small">Webcam khác miền</text><text x="920" y="681" class="small">dữ liệu huấn luyện</text>
+
+    <rect x="1107" y="600" width="190" height="105" rx="13" fill="#eaf5f2" stroke="#c6e2d7" stroke-width="2"/>
+    <text x="1122" y="630" class="code" fill="#287d62">PIPELINE</text>
+    <text x="1122" y="660" class="small">Tiền xử lý hoặc</text><text x="1122" y="681" class="small">thứ tự lớp sai</text>
+
+    <rect x="1309" y="600" width="201" height="105" rx="13" fill="#fff8e9" stroke="#efdfb8" stroke-width="2"/>
+    <text x="1324" y="630" class="code" fill="#9a7025">THRESHOLD</text>
+    <text x="1324" y="660" class="small">Điểm dao động</text><text x="1324" y="681" class="small">gần ngưỡng</text>
+  </g>
+
+  <!-- Footer legend -->
+  <rect x="60" y="805" width="1480" height="130" rx="20" fill="#eaf0f5"/>
+  <text x="90" y="850" class="heading">Nguyên tắc ghi nhận</text>
+  <text x="90" y="885" class="body">Đối chiếu nhãn thật với dự đoán; với video tải lên, xem cả nhãn toàn video và cửa sổ liên quan.</text>
+  <text x="90" y="914" class="body">Chỉ kết luận nguyên nhân khi có bằng chứng. Làm mờ khuôn mặt hoặc chỉ dùng hình ảnh được phép công bố.</text>
+  <rect x="1300" y="832" width="190" height="64" rx="14" fill="#ffffff" stroke="#d1dde7" stroke-width="2"/>
+  <circle cx="1330" cy="864" r="13" fill="#3b9a75"/><path d="M1324 864l4 4 8-9" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="1354" y="859" class="small" fill="#237554">Đúng</text><text x="1354" y="881" class="small" fill="#60758a">/ Sai</text>
+</svg>
